@@ -125,6 +125,53 @@ def _load_schedule_config(config_data: Dict) -> Dict:
     }
 
 
+def _load_digest_config(config_data: Dict) -> Dict:
+    """Load the downstream briefing selector without exposing channel secrets."""
+    digest = config_data.get("digest", {}) or {}
+    categories = []
+    for category in digest.get("categories", []):
+        categories.append({
+            "ID": category.get("id", ""),
+            "NAME": category.get("name", category.get("id", "其他重要新闻")),
+            "QUOTA": category.get("quota", 0),
+            "WEIGHT": category.get("weight", 1.0),
+            "FEEDS": category.get("feeds", []),
+            "KEYWORDS": category.get("keywords", []),
+        })
+    breaking = digest.get("breaking", {}) or {}
+    weekly = digest.get("weekly", {}) or {}
+    ai_summaries = digest.get("ai_summaries", {}) or {}
+    return {
+        "ENABLED": digest.get("enabled", False),
+        "MAX_ITEMS": digest.get("max_items", 20),
+        "SUMMARY_MAX_CHARS": digest.get("summary_max_chars", 100),
+        "SOURCE_LIMIT": digest.get("source_limit", 2),
+        "DEDUP_SIMILARITY": digest.get("dedup_similarity", 0.88),
+        "ARCHIVE_DIR": digest.get("archive_dir", "output/briefings"),
+        "RETENTION_DAYS": digest.get("retention_days", 30),
+        "SLOT_KEYS": digest.get("slot_keys", []),
+        "SLOT_NAMES": digest.get("slot_names", {}),
+        "CATEGORIES": categories,
+        "BREAKING": {
+            "ENABLED": breaking.get("enabled", True),
+            "IMMEDIATE_PUSH": breaking.get("immediate_push", True),
+            "MAX_ITEMS": breaking.get("max_items", 3),
+            "COOLDOWN_MINUTES": breaking.get("cooldown_minutes", 180),
+            "STRONG_KEYWORDS": breaking.get("strong_keywords", []),
+        },
+        "AI_SUMMARIES": {
+            "ENABLED": ai_summaries.get("enabled", False),
+            "BATCH_SIZE": ai_summaries.get("batch_size", 20),
+        },
+        "WEEKLY": {
+            "ENABLED": weekly.get("enabled", True),
+            "WEEKDAY": weekly.get("weekday", 7),
+            "SLOT_KEY": weekly.get("slot_key", "evening_digest"),
+            "AI_ENABLED": weekly.get("ai_enabled", False),
+        },
+    }
+
+
 def _load_timeline_data(config_dir: str = "config") -> Dict:
     """
     加载 timeline.yaml
@@ -562,6 +609,7 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
 
     # 统一调度配置
     config["SCHEDULE"] = _load_schedule_config(config_data)
+    config["DIGEST"] = _load_digest_config(config_data)
     config["_TIMELINE_DATA"] = _load_timeline_data(
         str(Path(config_path).parent) if config_path else "config"
     )

@@ -9,6 +9,8 @@
 """
 
 from typing import Dict, List, Tuple, Optional, Callable
+import unicodedata
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from trendradar.core.frequency import matches_word_groups, _word_matches
 from trendradar.utils.time import DEFAULT_TIMEZONE
@@ -491,6 +493,44 @@ def count_word_frequency(
     return stats, total_titles
 
 
+def _rss_url_key(url: str) -> str:
+    """Ignore common tracking parameters while retaining article-identifying queries."""
+    try:
+        parts = urlsplit(url)
+        tracking_keys = {
+            "fbclid", "gclid", "dclid", "msclkid", "mc_cid", "mc_eid",
+            "_hsenc", "_hsmi", "vero_id",
+        }
+        query = sorted(
+            (key, value)
+            for key, value in parse_qsl(parts.query, keep_blank_values=True)
+            if not key.lower().startswith("utm_") and key.lower() not in tracking_keys
+        )
+        path = parts.path.rstrip("/") or "/"
+        return urlunsplit(
+            (parts.scheme.lower(), parts.netloc.lower(), path, urlencode(query), "")
+        )
+    except ValueError:
+        return url
+
+
+def group_rss_stats_by_source(stats: List[Dict]) -> List[Dict]:
+    """Group RSS items by publisher, preserving their publication-time ranks."""
+    sources = {}
+    for stat in stats:
+        for title in stat["titles"]:
+            source = title["source_name"]
+            sources.setdefault(source, []).append(title)
+    total = sum(len(titles) for titles in sources.values())
+    result = []
+    for source, titles in sources.items():
+        titles.sort(key=lambda item: min(item.get("ranks") or [999999]))
+        result.append({"word": source, "count": len(titles), "titles": titles,
+                       "position": len(result),
+                       "percentage": round(len(titles) / total * 100, 2) if total else 0})
+    return result
+
+
 def count_rss_frequency(
     rss_items: List[Dict],
     word_groups: List[Dict],
@@ -564,7 +604,7 @@ def count_rss_frequency(
     if new_items:
         for item in new_items:
             if item.get("url"):
-                new_urls.add(item["url"])
+                new_urls.add(_rss_url_key(item["url"]))
 
     # 初始化词组统计
     word_stats = {}
@@ -574,6 +614,7 @@ def count_rss_frequency(
 
     total_items = len(rss_items)
     processed_urls = set()  # 用于去重
+    processed_titles = set()
 
     # 为每个条目分配一个基于发布时间的"排名"
     # 按发布时间排序，最新的排在前面
@@ -587,12 +628,16 @@ def count_rss_frequency(
     for item in rss_items:
         title = item.get("title", "")
         url = item.get("url", "")
+        url_key = _rss_url_key(url) if url else ""
+        title_key = " ".join(unicodedata.normalize("NFKC", title).casefold().split())
 
         # 去重
-        if url and url in processed_urls:
+        if (url_key and url_key in processed_urls) or (title_key and title_key in processed_titles):
             continue
-        if url:
-            processed_urls.add(url)
+        if url_key:
+            processed_urls.add(url_key)
+        if title_key:
+            processed_titles.add(title_key)
 
         # 使用统一的匹配逻辑
         if not matches_word_groups(title, word_groups, filter_words, global_filters):
@@ -637,7 +682,7 @@ def count_rss_frequency(
                 time_display = format_iso_time_friendly(published_at, timezone, include_date=True) if published_at else ""
 
                 # 判断是否为新增
-                is_new = url in new_urls if url else False
+                is_new = url_key in new_urls if url_key else False
 
                 # 获取排名（基于发布时间顺序）
                 rank = url_to_rank.get(url, 99) if url else 99
@@ -652,6 +697,7 @@ def count_rss_frequency(
                     "url": url,
                     "mobile_url": "",
                     "is_new": is_new,
+                    "summary": item.get("summary", ""),
                 }
                 word_stats[group_key]["titles"].append(title_data)
                 break  # 一个条目只匹配第一个词组

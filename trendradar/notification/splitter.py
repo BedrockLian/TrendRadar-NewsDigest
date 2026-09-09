@@ -5,6 +5,7 @@
 提供消息内容分批拆分功能，确保消息大小不超过各平台限制
 """
 
+import html
 from datetime import datetime
 from typing import Dict, List, Optional, Callable
 
@@ -130,6 +131,18 @@ DEFAULT_BATCH_SIZES = {
 
 # 默认区域顺序
 DEFAULT_REGION_ORDER = ["hotlist", "rss", "new_items", "standalone", "ai_analysis"]
+
+
+def _format_digest_summary(item: Dict, format_type: str) -> str:
+    """Render the optional <=100-character briefing synopsis."""
+    summary = str(item.get("summary") or "").strip()
+    if not summary:
+        return ""
+    if format_type == "telegram":
+        summary = html.escape(summary)
+    if format_type == "feishu":
+        return f"\n     <font color='grey'>简介：{summary}</font>"
+    return f"\n     简介：{summary}"
 
 
 def split_content_into_batches(
@@ -1030,35 +1043,42 @@ def _process_rss_stats_section(
     # 计算总条目数
     total_items = sum(stat["count"] for stat in rss_stats)
     total_keywords = len(rss_stats)
+    is_digest = any(
+        "_id" in title
+        for stat in rss_stats
+        for title in stat.get("titles", [])
+    )
+    is_alert = is_digest and all(stat.get("word") == "突发与重要更新" for stat in rss_stats)
+    section_label = "突发新闻提醒" if is_alert else "分时新闻简报" if is_digest else "RSS 订阅统计"
 
     # RSS 统计区块标题（根据 add_separator 决定是否添加前置分割线）
     rss_header = ""
     if add_separator and current_batch_has_content:
         # 需要添加分割线
         if format_type == "feishu":
-            rss_header = f"\n{feishu_separator}\n\n📰 **RSS 订阅统计** (共 {total_items} 条)\n\n"
+            rss_header = f"\n{feishu_separator}\n\n📰 **{section_label}** (共 {total_items} 条)\n\n"
         elif format_type == "dingtalk":
-            rss_header = f"\n---\n\n📰 **RSS 订阅统计** (共 {total_items} 条)\n\n"
+            rss_header = f"\n---\n\n📰 **{section_label}** (共 {total_items} 条)\n\n"
         elif format_type in ("wework", "bark"):
-            rss_header = f"\n\n\n\n📰 **RSS 订阅统计** (共 {total_items} 条)\n\n"
+            rss_header = f"\n\n\n\n📰 **{section_label}** (共 {total_items} 条)\n\n"
         elif format_type == "telegram":
-            rss_header = f"\n\n📰 RSS 订阅统计 (共 {total_items} 条)\n\n"
+            rss_header = f"\n\n📰 {section_label} (共 {total_items} 条)\n\n"
         elif format_type == "slack":
-            rss_header = f"\n\n📰 *RSS 订阅统计* (共 {total_items} 条)\n\n"
+            rss_header = f"\n\n📰 *{section_label}* (共 {total_items} 条)\n\n"
         else:
-            rss_header = f"\n\n📰 **RSS 订阅统计** (共 {total_items} 条)\n\n"
+            rss_header = f"\n\n📰 **{section_label}** (共 {total_items} 条)\n\n"
     else:
         # 不需要分割线（第一个区域）
         if format_type == "feishu":
-            rss_header = f"📰 **RSS 订阅统计** (共 {total_items} 条)\n\n"
+            rss_header = f"📰 **{section_label}** (共 {total_items} 条)\n\n"
         elif format_type == "dingtalk":
-            rss_header = f"📰 **RSS 订阅统计** (共 {total_items} 条)\n\n"
+            rss_header = f"📰 **{section_label}** (共 {total_items} 条)\n\n"
         elif format_type == "telegram":
-            rss_header = f"📰 RSS 订阅统计 (共 {total_items} 条)\n\n"
+            rss_header = f"📰 {section_label} (共 {total_items} 条)\n\n"
         elif format_type == "slack":
-            rss_header = f"📰 *RSS 订阅统计* (共 {total_items} 条)\n\n"
+            rss_header = f"📰 *{section_label}* (共 {total_items} 条)\n\n"
         else:
-            rss_header = f"📰 **RSS 订阅统计** (共 {total_items} 条)\n\n"
+            rss_header = f"📰 **{section_label}** (共 {total_items} 条)\n\n"
 
     # 添加 RSS 标题
     test_content = current_batch + rss_header
@@ -1143,7 +1163,7 @@ def _process_rss_stats_section(
             else:
                 formatted_title = f"{first_title_data['title']}"
 
-            first_news_line = f"  1. {formatted_title}\n"
+            first_news_line = f"  1. {formatted_title}{_format_digest_summary(first_title_data, format_type)}\n"
             if len(stat["titles"]) > 1:
                 first_news_line += "\n"
 
@@ -1183,7 +1203,7 @@ def _process_rss_stats_section(
             else:
                 formatted_title = f"{title_data['title']}"
 
-            news_line = f"  {j + 1}. {formatted_title}\n"
+            news_line = f"  {j + 1}. {formatted_title}{_format_digest_summary(title_data, format_type)}\n"
             if j < len(stat["titles"]) - 1:
                 news_line += "\n"
 

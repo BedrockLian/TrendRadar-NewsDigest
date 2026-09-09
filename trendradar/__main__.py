@@ -9,18 +9,20 @@ TrendRadar 主程序
 import argparse
 import os
 import webbrowser
+from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from trendradar.context import AppContext
 from trendradar import __version__
 from trendradar.core import load_config
-from trendradar.core.analyzer import convert_keyword_stats_to_platform_stats
+from trendradar.core.analyzer import convert_keyword_stats_to_platform_stats, group_rss_stats_by_source
 from trendradar.crawler import DataFetcher
 from trendradar.storage import convert_crawl_results_to_news_data
 from trendradar.utils.time import DEFAULT_TIMEZONE, is_within_days, calculate_days_old
 from trendradar.ai import AIAnalyzer, AIAnalysisResult
 from trendradar.core.scheduler import ResolvedSchedule
+from trendradar.digest import DigestEngine, DigestResult
 from trendradar.commands import check_all_versions, run_doctor, run_test_notification, handle_status_commands
 from trendradar.commands.version import _fetch_remote_version, _parse_version
 
@@ -86,6 +88,8 @@ class NewsAnalyzer:
         self._rss_total_count = 0
         self._rss_matched_count = 0
         self._hotlist_total_count = 0
+        self._digest_engine: Optional[DigestEngine] = None
+        self._digest_result: Optional[DigestResult] = None
 
         # 初始化存储管理器（使用 AppContext）
         self._init_storage_manager()
@@ -892,13 +896,14 @@ class NewsAnalyzer:
                 return False
 
             # 记录推送成功
-            if any(results.values()):
+            delivered = any(results.values())
+            if delivered:
                 if schedule.once_push and schedule.period_key:
                     scheduler = self.ctx.create_scheduler()
                     date_str = self.ctx.format_date()
                     scheduler.record_execution(schedule.period_key, "push", date_str)
 
-            return True
+            return delivered
 
         elif cfg["ENABLE_NOTIFICATION"] and not has_notification:
             print("⚠️ 警告：通知功能已启用但未配置任何通知渠道，将跳过通知发送")
@@ -927,9 +932,12 @@ class NewsAnalyzer:
         now = self.ctx.get_time()
         print(f"当前北京时间: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
-        if not self.ctx.config["ENABLE_CRAWLER"]:
-            print("爬虫功能已禁用（ENABLE_CRAWLER=False），程序退出")
+        if not self.ctx.config["ENABLE_CRAWLER"] and not self.ctx.rss_enabled:
+            print("热榜和 RSS 抓取均已禁用，程序退出")
             return False
+
+        if not self.ctx.config["ENABLE_CRAWLER"]:
+            print("热榜抓取已禁用，将只抓取 RSS")
 
         has_notification = self._has_notification_configured()
         if not self.ctx.config["ENABLE_NOTIFICATION"]:
@@ -1257,6 +1265,10 @@ class NewsAnalyzer:
                     quiet=True,
                 )
 
+        if self.ctx.display_mode == "platform":
+            rss_stats = group_rss_stats_by_source(rss_stats or [])
+            rss_new_stats = group_rss_stats_by_source(rss_new_stats or [])
+
         self._rss_total_count = total
         return rss_stats, rss_new_stats, raw_rss_items, rss_new_urls
 
@@ -1316,6 +1328,9 @@ class NewsAnalyzer:
                     "published_at": item.published_at,
                     "summary": item.summary,
                     "author": item.author,
+                    "guid": getattr(item, "guid", ""),
+                    "first_time": item.first_time,
+                    "last_time": item.last_time,
                 })
 
         # 输出过滤统计
@@ -1403,6 +1418,40 @@ class NewsAnalyzer:
         scheduler = self.ctx.create_scheduler()
         schedule = scheduler.resolve()
 
+        # Observe every crawl. Replace report/notification content only during
+        # a briefing slot or when an urgent alert is ready.
+        digest_config = self.ctx.config.get("DIGEST", {})
+        self._digest_result = None
+        if digest_config.get("ENABLED", False) and raw_rss_items:
+            self._digest_engine = DigestEngine(
+                digest_config,
+                now=self.ctx.get_time(),
+                ai_config=self.ctx.config.get("AI", {}),
+            )
+            self._digest_result = self._digest_engine.process(
+                raw_rss_items,
+                period_key=schedule.period_key,
+                scheduled_push=schedule.push,
+            )
+            if self._digest_result:
+                rss_items = self._digest_result.stats
+                rss_new_items = None
+                self._rss_total_count = len(self._digest_result.articles)
+                if self._digest_result.force_push and not schedule.push:
+                    print("[简报] 检测到突发信息，将立即尝试推送")
+                    schedule = replace(
+                        schedule,
+                        period_key=None,
+                        period_name="突发与重要更新",
+                        push=True,
+                        once_push=False,
+                        report_mode="incremental",
+                    )
+            elif schedule.push:
+                # A scheduled slot with no new material should remain quiet.
+                rss_items = []
+                rss_new_items = None
+
         # 使用 schedule 决定的 report_mode 覆盖全局配置
         effective_mode = schedule.report_mode
         if effective_mode != self.report_mode:
@@ -1438,8 +1487,34 @@ class NewsAnalyzer:
         title_info = None
         standalone_data = None
 
+        # RSS-only 模式不读取旧热榜数据库，避免已移除的平台重新出现在报告中。
+        if not self.ctx.config["ENABLE_CRAWLER"]:
+            title_info = {}
+            standalone_data = self._prepare_standalone_data(
+                {}, {}, title_info, raw_rss_items
+            )
+            stats, html_file, ai_result, rss_items, standalone_data, rss_new_items = self._run_analysis_pipeline(
+                {},
+                self.report_mode,
+                title_info,
+                {},
+                word_groups,
+                filter_words,
+                {},
+                failed_ids=[],
+                global_filters=global_filters,
+                rss_items=rss_items,
+                rss_new_items=rss_new_items,
+                standalone_data=standalone_data,
+                schedule=schedule,
+                rss_new_urls=rss_new_urls,
+            )
+            results = {}
+            id_to_name = {}
+            new_titles = {}
+
         # current 模式需要使用完整的历史数据
-        if self.report_mode == "current":
+        elif self.report_mode == "current":
             analysis_data = self._load_analysis_data()
             if analysis_data:
                 (
@@ -1580,7 +1655,7 @@ class NewsAnalyzer:
         if mode_strategy["should_send_notification"]:
             # standalone_data 已在分析流水线中翻译，直接复用（不再重新 prepare 原文，
             # 避免覆盖译文、避免重复翻译，并保证网页报告与推送译文一致）
-            self._send_notification_if_needed(
+            delivered = self._send_notification_if_needed(
                 stats,
                 mode_strategy["report_type"],
                 self.report_mode,
@@ -1595,6 +1670,8 @@ class NewsAnalyzer:
                 current_results=results,
                 schedule=schedule,
             )
+            if delivered and self._digest_engine and self._digest_result:
+                self._digest_engine.mark_delivered(self._digest_result)
 
         # 打开浏览器（仅在非容器环境）
         if self._should_open_browser() and html_file:
@@ -1614,8 +1691,11 @@ class NewsAnalyzer:
 
             mode_strategy = self._get_mode_strategy()
 
-            # 抓取热榜数据
-            results, id_to_name, failed_ids = self._crawl_data()
+            # 抓取热榜数据；RSS-only 配置跳过热榜及其历史数据库。
+            if self.ctx.config["ENABLE_CRAWLER"]:
+                results, id_to_name, failed_ids = self._crawl_data()
+            else:
+                results, id_to_name, failed_ids = {}, {}, []
 
             # 抓取 RSS 数据（如果启用），返回统计条目、新增条目和原始条目
             rss_items, rss_new_items, raw_rss_items, rss_new_urls = self._crawl_rss_data()
