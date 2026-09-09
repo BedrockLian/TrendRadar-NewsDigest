@@ -32,7 +32,7 @@ AI_MODEL=deepseek/deepseek-chat
 # AI_API_BASE=https://兼容接口地址/v1
 ```
 
-该文件权限应设为 `600`，并由 systemd 的 `EnvironmentFile` 读取。密钥只通过运行环境读取，不要写入仓库。没有密钥或调用失败时，简报和统计版周报仍会正常生成。
+该文件应由 `root:trendradar` 持有并设为 `640`，再由 systemd 的 `EnvironmentFile` 读取。密钥只通过运行环境读取，不要写入仓库。没有密钥或调用失败时，简报和统计版周报仍会正常生成。
 
 ## 启用通知
 
