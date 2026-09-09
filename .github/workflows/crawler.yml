@@ -1,10 +1,8 @@
 name: News Digest
 
 on:
-  schedule:
-    # 每 30 分钟采集一次，覆盖北京时间 08:00、12:30、20:00 三个简报窗口。
-    - cron: "*/30 * * * *"
-
+  # 生产环境由云服务器的 systemd timer 运行，避免重复采集和重复推送。
+  # 保留手动入口仅用于必要时诊断；仓库中的工作流默认保持禁用。
   workflow_dispatch:
 
 concurrency:

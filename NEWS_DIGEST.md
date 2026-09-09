@@ -20,20 +20,22 @@
 output/briefings/YYYY-MM/YYYY-MM-DD-HHMM-时段.md
 ```
 
-突发提醒写入 `output/briefings/alerts/`，每周日 20:00 的简报同时生成 `output/briefings/weekly/YYYY-Www.md`。程序只保留最近 30 天的简报和状态。GitHub Actions 会把这些 Markdown 文件及去重状态提交回 fork，Docker 部署则由持久化的 `output` 目录保存。
+突发提醒写入 `output/briefings/alerts/`，每周日 20:00 的简报同时生成 `output/briefings/weekly/YYYY-Www.md`。程序只保留最近 30 天的简报和状态。云服务器把这些 Markdown 文件复制到网站的 `/briefings/` 目录，去重状态只保存在服务器内部，不会公开。
 
 ## 启用 AI
 
-在 fork 的 **Settings → Secrets and variables → Actions** 中新增：
+在服务器的 `/opt/trendradar/config/news-digest.env` 中新增：
 
-- `AI_API_KEY`：服务商密钥。
-- `AI_MODEL`：可选，例如 `deepseek/deepseek-chat` 或 `openai/gpt-4o-mini`。
-- `AI_API_BASE`：仅在使用兼容接口或中转服务时填写。
+```dotenv
+AI_API_KEY=服务商密钥
+AI_MODEL=deepseek/deepseek-chat
+# AI_API_BASE=https://兼容接口地址/v1
+```
 
-密钥只通过运行环境读取，不要写入仓库。没有密钥或调用失败时，简报和统计版周报仍会正常生成。
+该文件权限应设为 `600`，并由 systemd 的 `EnvironmentFile` 读取。密钥只通过运行环境读取，不要写入仓库。没有密钥或调用失败时，简报和统计版周报仍会正常生成。
 
 ## 启用通知
 
-在同一 Secrets 页面配置任一现有通知渠道，例如 `FEISHU_WEBHOOK_URL`、`TELEGRAM_BOT_TOKEN` 与 `TELEGRAM_CHAT_ID`、`DINGTALK_WEBHOOK_URL` 或邮件相关 Secret。未配置渠道时，程序只采集并生成 Markdown 存档。
+在同一个环境文件中配置任一现有通知渠道，例如 `FEISHU_WEBHOOK_URL`、`TELEGRAM_BOT_TOKEN` 与 `TELEGRAM_CHAT_ID`、`DINGTALK_WEBHOOK_URL` 或邮件相关变量。未配置渠道时，程序只采集并生成 Markdown 存档。
 
-GitHub 的定时任务可能存在几分钟延迟，因此每个简报窗口保留一小时，并用状态记录保证窗口内只成功推送一次。也可以从 Actions 页面手动运行工作流。
+生产环境由 `trendradar-collect.timer` 每 30 分钟运行。每个简报窗口保留一小时，并用状态记录保证窗口内只成功推送一次。GitHub Actions 的定时触发已移除并保持禁用，避免与服务器重复采集和重复推送。

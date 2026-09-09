@@ -1,0 +1,23 @@
+[Unit]
+Description=TrendRadar news collection
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=trendradar
+Group=trendradar
+WorkingDirectory=/opt/trendradar
+Environment=TZ=Asia/Shanghai
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/opt/trendradar/config/news-digest.env
+ExecStart=/bin/sh /opt/trendradar/deployment/run.sh
+TimeoutStartSec=900
+Nice=10
+CPUQuota=50%
+MemoryMax=600M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/trendradar
+ProtectHome=true
