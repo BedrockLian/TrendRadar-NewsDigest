@@ -347,6 +347,7 @@ scp "$env:TEMP\trendradar-$commit.tar" campus-server:/tmp/
 发布时应短暂停止 timer，避免解压期间启动新任务；如果 oneshot 正在运行，先等待或安全停止。发布必须保留：
 
 - `/opt/trendradar/.venv`；
+- `/opt/trendradar/python`（`.venv/bin/python` 指向这里的自带 Python 运行时）；
 - `/opt/trendradar/config`；
 - `/opt/trendradar/output`；
 - `/opt/trendradar/public`，直到新代码完成一次成功发布。
@@ -362,7 +363,7 @@ sudo systemctl enable --now trendradar-collect.timer
 sudo systemctl start trendradar-collect.service
 ```
 
-成功后把完整 commit 写入 `/opt/trendradar/.deployed-commit`。若采集或发布失败，恢复发布前源码备份；保留 `output`，否则会丢失简报和投递状态。
+成功后把完整 commit 写入 `/opt/trendradar/.deployed-commit`。若使用 `rsync --delete`，必须同时排除 `.venv/`、`python/`、`config/`、`output/` 和 `public/`。若采集或发布失败，恢复发布前源码备份；保留 `output`，否则会丢失简报和投递状态。
 
 ## 9. 验证清单
 
