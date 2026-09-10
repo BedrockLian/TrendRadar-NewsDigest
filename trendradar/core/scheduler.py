@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 @dataclass
@@ -186,6 +186,69 @@ class Scheduler:
             print(f"[调度] 频率词文件: {resolved.frequency_file}")
 
         return resolved
+
+    def publication_schedule(self, period_keys: List[str]) -> Dict[str, Any]:
+        """Return public slot metadata and the next configured publication time."""
+        now = self.get_time()
+        wanted = set(period_keys)
+        slots: List[Dict[str, Any]] = []
+        for key in period_keys:
+            period = self.timeline.get("periods", {}).get(key)
+            if not period:
+                continue
+            slots.append(
+                {
+                    "key": key,
+                    "name": period.get("name", key),
+                    "start": period.get("start", ""),
+                    "active": self._in_range(
+                        now.strftime("%H:%M"), period["start"], period["end"]
+                    ),
+                }
+            )
+        slots.sort(key=lambda slot: slot["start"])
+
+        if not self.enabled:
+            return {"slots": slots, "next_slot": {}}
+
+        candidates: List[tuple[datetime, str, Dict[str, Any]]] = []
+        for day_offset in range(8):
+            date = (now + timedelta(days=day_offset)).date()
+            plan_key = self.timeline.get("week_map", {}).get(date.isoweekday())
+            plan = self.timeline.get("day_plans", {}).get(plan_key, {})
+            for key in plan.get("periods", []):
+                if key not in wanted:
+                    continue
+                period = self.timeline.get("periods", {}).get(key, {})
+                if not self._merge_with_default(key).get("push", False):
+                    continue
+                start = period.get("start")
+                if not start:
+                    continue
+                hour, minute = (int(part) for part in start.split(":"))
+                naive = datetime.combine(date, datetime.min.time()).replace(
+                    hour=hour, minute=minute
+                )
+                if hasattr(now.tzinfo, "localize"):
+                    candidate = now.tzinfo.localize(naive)
+                else:
+                    candidate = naive.replace(tzinfo=now.tzinfo)
+                if candidate > now:
+                    candidates.append((candidate, key, period))
+
+        next_slot: Dict[str, Any] = {}
+        if candidates:
+            candidate, key, period = min(candidates, key=lambda value: value[0])
+            next_slot = {
+                "key": key,
+                "name": period.get("name", key),
+                "start": period.get("start", ""),
+                "at": candidate.isoformat(),
+            }
+            for slot in slots:
+                slot["next"] = slot["key"] == key
+
+        return {"slots": slots, "next_slot": next_slot}
 
     def _find_active_period(
         self, now_hhmm: str, day_plan: Dict[str, Any]

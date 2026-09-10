@@ -14,7 +14,7 @@ from pathlib import Path
 # Web 服务器配置
 _raw_port = int(os.environ.get("WEBSERVER_PORT", "8080"))
 WEBSERVER_PORT = _raw_port if 1 <= _raw_port <= 65535 else 8080
-WEBSERVER_DIR = "/app/output"
+WEBSERVER_DIR = "/app/public"
 WEBSERVER_PID_FILE = "/tmp/webserver.pid"
 
 
@@ -23,7 +23,10 @@ def manual_run():
     print("🔄 手动执行爬虫...")
     try:
         result = subprocess.run(
-            ["python", "-m", "trendradar"], cwd="/app", capture_output=False, text=True
+            [sys.executable, "-m", "deployment.run_once", "output", "public"],
+            cwd="/app",
+            capture_output=False,
+            text=True,
         )
         if result.returncode == 0:
             print("✅ 执行完成")
@@ -529,7 +532,7 @@ def _cleanup_stale_pid():
 
 
 def start_webserver():
-    """启动 Web 服务器托管 output 目录"""
+    """启动 Web 服务器托管安全发布目录"""
     print(f"🌐 启动 Web 服务器 (端口: {WEBSERVER_PORT})...")
     print(f"  🔒 安全提示：仅提供静态文件访问，限制在 {WEBSERVER_DIR} 目录")
 
@@ -561,12 +564,19 @@ def start_webserver():
         return
 
     try:
-        # 启动 HTTP 服务器
-        # 使用 --bind 绑定到 0.0.0.0 使容器内部可访问
-        # 工作目录限制在 WEBSERVER_DIR，防止访问其他目录
+        # 使用 --directory 固定服务根目录，同时允许发布器整体替换该目录。
         process = subprocess.Popen(
-            [sys.executable, '-m', 'http.server', str(WEBSERVER_PORT), '--bind', '0.0.0.0'],
-            cwd=WEBSERVER_DIR,
+            [
+                sys.executable,
+                '-m',
+                'http.server',
+                str(WEBSERVER_PORT),
+                '--bind',
+                '0.0.0.0',
+                '--directory',
+                WEBSERVER_DIR,
+            ],
+            cwd="/app",
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True
@@ -654,7 +664,7 @@ def show_help():
   files            - 显示输出文件
   logs             - 实时查看日志
   restart          - 重启说明
-  start_webserver  - 启动 Web 服务器托管 output 目录
+  start_webserver  - 启动 Web 服务器托管安全发布目录
   stop_webserver   - 停止 Web 服务器
   webserver_status - 查看 Web 服务器状态
   help             - 显示此帮助

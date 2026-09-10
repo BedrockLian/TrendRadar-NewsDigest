@@ -60,6 +60,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # 再复制项目代码并安装项目本身
 COPY docker/manage.py .
+COPY deployment/ ./deployment/
 COPY trendradar/ ./trendradar/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
@@ -72,7 +73,7 @@ RUN sed -i 's/\r$//' /entrypoint.sh.tmp && \
     mv /entrypoint.sh.tmp /entrypoint.sh && \
     chmod +x /entrypoint.sh && \
     chmod +x manage.py && \
-    mkdir -p /app/config /app/output
+    mkdir -p /app/config /app/output /app/public
 
 ENV PYTHONUNBUFFERED=1 \
     CONFIG_PATH=/app/config/config.yaml \

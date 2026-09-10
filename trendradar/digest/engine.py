@@ -29,7 +29,6 @@ TRACKING_QUERY_KEYS = {
     "_hsmi", "vero_id", "ref", "ref_src", "source",
 }
 
-
 @dataclass
 class DigestResult:
     """One idempotent briefing or alert prepared for rendering and delivery."""
@@ -39,7 +38,37 @@ class DigestResult:
     stats: List[Dict[str, Any]]
     articles: List[Dict[str, Any]]
     archive_path: str
+    created_at: str = ""
+    period_key: Optional[str] = None
+    period_name: str = ""
     force_push: bool = False
+
+
+@dataclass
+class HomepageSnapshot:
+    """Sanitized data needed by the public, static news workspace."""
+
+    generated_at: str
+    next_slot: Dict[str, Any]
+    slots: List[Dict[str, Any]]
+    latest_digest: Optional["PublicDigest"]
+    active_alerts: List[Dict[str, Any]]
+    updates_since_digest: List[Dict[str, Any]]
+    all_news: List[Dict[str, Any]]
+    source_count: int
+
+
+@dataclass
+class PublicDigest:
+    """A briefing representation that is safe to pass to a public renderer."""
+
+    created_at: str
+    period_key: Optional[str]
+    period_name: str
+    archive_url: str
+    sections: List[Dict[str, Any]]
+    article_count: int
+    source_count: int
 
 
 def canonical_url(url: str) -> str:
@@ -60,6 +89,17 @@ def canonical_url(url: str) -> str:
         )
     except ValueError:
         return url.strip()
+
+
+def safe_http_url(url: str) -> str:
+    """Return a public HTTP(S) URL, rejecting executable or malformed schemes."""
+    try:
+        parts = urlsplit((url or "").strip())
+    except ValueError:
+        return ""
+    if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
+        return ""
+    return url.strip()
 
 
 def normalize_title(title: str) -> str:
@@ -129,6 +169,99 @@ class DigestEngine:
         self._save_state()
         return result
 
+    def latest_digest(self) -> Optional[DigestResult]:
+        """Return the newest scheduled briefing without confusing it with alerts."""
+        candidates = []
+        for result_id, result in self.state.get("results", {}).items():
+            if result.get("kind") != "digest":
+                continue
+            created = self._parse_time(result.get("created_at"))
+            if created:
+                candidates.append((created, result_id, result))
+        for _, result_id, result_record in sorted(candidates, reverse=True):
+            articles = [
+                self.state["articles"][article_id]
+                for article_id in result_record.get("article_ids", [])
+                if article_id in self.state["articles"]
+            ]
+            if not articles:
+                continue
+            period_key = result_record.get("period_key")
+            if not period_key:
+                period_key = next(
+                    (
+                        key
+                        for key in self.config.get("SLOT_KEYS", [])
+                        if result_id.endswith(f"-{key}")
+                    ),
+                    None,
+                )
+            return self._result_from_records(
+                result_id=result_id,
+                kind="digest",
+                records=articles,
+                archive_path=result_record.get("archive_path", ""),
+                created_at=result_record.get("created_at", ""),
+                period_key=period_key,
+                period_name=self.config.get("SLOT_NAMES", {}).get(period_key, period_key or ""),
+            )
+        return None
+
+    def build_homepage_snapshot(
+        self,
+        current_items: Optional[List[Dict[str, Any]]],
+        schedule: Optional[Dict[str, Any]] = None,
+    ) -> HomepageSnapshot:
+        """Build a safe view of the latest briefing and the current crawl."""
+        schedule = schedule or {}
+        latest_result = self.latest_digest()
+        latest_public = self._public_digest(latest_result) if latest_result else None
+        current = self._public_current_articles(current_items or [])
+        digest_time = self._parse_time(latest_result.created_at) if latest_result else None
+        alert_window = timedelta(
+            minutes=max(1, int(self.breaking.get("COOLDOWN_MINUTES", 180)))
+        )
+
+        updates = []
+        for item in current:
+            updated = self._parse_time(item.get("update_detected_at"))
+            first_seen = self._parse_time(item.get("first_seen"))
+            observed = updated or first_seen
+            active_breaking = (
+                item.get("status") == "breaking"
+                and observed is not None
+                and timedelta(0) <= self.now - observed <= alert_window
+            )
+            if active_breaking:
+                item["status"] = "breaking"
+            elif digest_time:
+                item["status"] = (
+                    "updated"
+                    if updated and updated > digest_time
+                    else "new"
+                    if first_seen and first_seen > digest_time
+                    else ""
+                )
+            else:
+                item["status"] = "updated" if updated else "new" if first_seen else ""
+            if digest_time and observed and observed > digest_time:
+                updates.append(item)
+
+        return HomepageSnapshot(
+            generated_at=self.now.isoformat(),
+            next_slot=dict(schedule.get("next_slot") or {}),
+            slots=list(schedule.get("slots") or []),
+            latest_digest=latest_public,
+            active_alerts=self._active_alert_articles(),
+            updates_since_digest=updates,
+            all_news=current,
+            source_count=(
+                latest_public.source_count
+                if latest_public
+                else len({item["source_name"] for item in current if item.get("source_name")})
+            ),
+        )
+
     def mark_delivered(self, result: DigestResult) -> None:
         """Record successful external delivery; failed sends remain retryable."""
         if result.kind == "alert":
@@ -140,6 +273,167 @@ class DigestEngine:
         if record:
             record["delivered_at"] = self.now.isoformat()
         self._save_state()
+
+    def _active_alert_articles(self) -> List[Dict[str, Any]]:
+        cooldown = max(1, int(self.breaking.get("COOLDOWN_MINUTES", 180)))
+        cutoff = self.now - timedelta(minutes=cooldown)
+        candidates = []
+        for record in self.state.get("articles", {}).values():
+            if not record.get("breaking"):
+                continue
+            observed = self._parse_time(record.get("update_detected_at")) or self._parse_time(
+                record.get("first_seen")
+            )
+            if observed and cutoff <= observed <= self.now:
+                candidates.append((observed, record))
+        candidates.sort(key=lambda value: value[0], reverse=True)
+        limit = max(1, int(self.breaking.get("MAX_ITEMS", 3)))
+        return [self._public_article(record) for _, record in candidates[:limit]]
+
+    def _public_digest(self, result: DigestResult) -> PublicDigest:
+        sections_by_name: Dict[str, Dict[str, Any]] = {}
+        sources: set[str] = set()
+        article_count = 0
+        for stat in result.stats:
+            titles = []
+            for item in stat.get("titles", []):
+                source_name = str(item.get("source_name") or "RSS")
+                sources.add(source_name)
+                titles.append(
+                    {
+                        "title": str(item.get("title") or ""),
+                        "url": safe_http_url(str(item.get("url") or "")),
+                        "summary": str(item.get("summary") or ""),
+                        "source_name": source_name,
+                        "published_at": str(item.get("time_display") or ""),
+                        "status": str(item.get("digest_status") or ""),
+                    }
+                )
+            if titles:
+                name = str(stat.get("word") or "其他重要新闻")
+                sections_by_name[name] = {
+                    "name": name,
+                    "count": len(titles),
+                    "articles": titles,
+                }
+                article_count += len(titles)
+        ordered_names = [
+            str(category.get("NAME"))
+            for category in self.categories
+            if category.get("NAME")
+        ] + ["其他重要新闻"]
+        sections = []
+        for name in ordered_names:
+            sections.append(
+                sections_by_name.pop(name, {"name": name, "count": 0, "articles": []})
+            )
+        sections.extend(sections_by_name.values())
+        return PublicDigest(
+            created_at=result.created_at,
+            period_key=result.period_key,
+            period_name=result.period_name,
+            archive_url=self._public_archive_url(result.archive_path),
+            sections=sections,
+            article_count=article_count,
+            source_count=len(sources),
+        )
+
+    @staticmethod
+    def _public_archive_url(path: str) -> str:
+        normalized = (path or "").replace("\\", "/")
+        marker = "briefings/"
+        if marker not in normalized:
+            return ""
+        relative = normalized.split(marker, 1)[1].lstrip("/")
+        if not relative or relative.startswith(".") or "/../" in f"/{relative}/":
+            return ""
+        return f"briefings/{relative}"
+
+    def _public_current_articles(
+        self, current_items: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        by_url = {
+            record.get("canonical_url"): record
+            for record in self.state.get("articles", {}).values()
+            if record.get("canonical_url")
+        }
+        by_title = {
+            normalize_title(record.get("title", "")): record
+            for record in self.state.get("articles", {}).values()
+            if record.get("title")
+        }
+        public: List[Dict[str, Any]] = []
+        for raw in current_items:
+            title = re.sub(r"\s+", " ", str(raw.get("title") or "")).strip()
+            url = safe_http_url(str(raw.get("url") or ""))
+            if not title or not url:
+                continue
+            url_key = canonical_url(url)
+            title_key = normalize_title(title)
+            record = by_url.get(url_key) or by_title.get(title_key)
+            if record:
+                category = self._category_for(raw)
+                public.append(
+                    {
+                        "title": title,
+                        "url": url,
+                        "summary": clean_summary(
+                            str(raw.get("summary") or record.get("summary") or title),
+                            self.summary_max_chars,
+                        ),
+                        "source_name": str(
+                            raw.get("feed_name") or raw.get("feed_id") or "RSS"
+                        ),
+                        "published_at": str(raw.get("published_at") or ""),
+                        "category_id": category.get("ID", "other"),
+                        "category_name": category.get("NAME", "其他重要新闻"),
+                        "status": str(record.get("status") or ""),
+                        "first_seen": str(record.get("first_seen") or ""),
+                        "update_detected_at": str(record.get("update_detected_at") or ""),
+                    }
+                )
+                continue
+            category = self._category_for(raw)
+            public.append(
+                {
+                    "title": title,
+                    "url": url,
+                    "summary": clean_summary(
+                        str(raw.get("summary") or title), self.summary_max_chars
+                    ),
+                    "source_name": str(raw.get("feed_name") or raw.get("feed_id") or "RSS"),
+                    "published_at": str(raw.get("published_at") or ""),
+                    "category_id": category.get("ID", "other"),
+                    "category_name": category.get("NAME", "其他重要新闻"),
+                    "status": "",
+                    "first_seen": "",
+                    "update_detected_at": "",
+                }
+            )
+        def published_sort_key(item: Dict[str, Any]) -> float:
+            published = self._parse_time(item.get("published_at"))
+            if published:
+                return published.timestamp()
+            observed = self._parse_time(item.get("first_seen"))
+            return observed.timestamp() if observed else float("-inf")
+
+        public.sort(key=published_sort_key, reverse=True)
+        return public
+
+    @staticmethod
+    def _public_article(record: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "title": str(record.get("title") or ""),
+            "url": safe_http_url(str(record.get("url") or "")),
+            "summary": str(record.get("summary") or ""),
+            "source_name": str(record.get("feed_name") or "RSS"),
+            "published_at": str(record.get("published_at") or ""),
+            "category_id": str(record.get("category_id") or "other"),
+            "category_name": str(record.get("category_name") or "其他重要新闻"),
+            "status": str(record.get("status") or ""),
+            "first_seen": str(record.get("first_seen") or ""),
+            "update_detected_at": str(record.get("update_detected_at") or ""),
+        }
 
     def _load_state(self) -> Dict[str, Any]:
         if self.state_path.exists():
@@ -314,12 +608,15 @@ class DigestEngine:
                 # A material update to a breaking story is eligible for a fresh alert.
                 articles[article_id]["alert_delivered_at"] = None
 
-    @staticmethod
-    def _parse_time(value: Optional[str]) -> Optional[datetime]:
+
+    def _parse_time(self, value: Optional[str]) -> Optional[datetime]:
         if not value:
             return None
         try:
-            return datetime.fromisoformat(value)
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None and self.now.tzinfo is not None:
+                parsed = parsed.replace(tzinfo=self.now.tzinfo)
+            return parsed
         except (TypeError, ValueError):
             return None
 
@@ -410,14 +707,30 @@ class DigestEngine:
                 if article_id in self.state["articles"]
             ]
             self._apply_ai_summaries(articles)
-            return self._result_from_records(result_id, "digest", articles, existing["archive_path"])
+            return self._result_from_records(
+                result_id=result_id,
+                kind="digest",
+                records=articles,
+                archive_path=existing["archive_path"],
+                created_at=existing.get("created_at", ""),
+                period_key=existing.get("period_key") or period_key,
+                period_name=self.config.get("SLOT_NAMES", {}).get(period_key, period_key),
+            )
 
         selected = self._select(self._candidate_records())
         if not selected:
             return None
         self._apply_ai_summaries(selected)
         archive_path = self._digest_archive_path(period_key)
-        result = self._result_from_records(result_id, "digest", selected, str(archive_path))
+        result = self._result_from_records(
+            result_id=result_id,
+            kind="digest",
+            records=selected,
+            archive_path=str(archive_path),
+            created_at=self.now.isoformat(),
+            period_key=period_key,
+            period_name=self.config.get("SLOT_NAMES", {}).get(period_key, period_key),
+        )
         self._write_markdown(result, archive_path)
         self.state["results"][result_id] = {
             "kind": "digest",
@@ -503,8 +816,10 @@ class DigestEngine:
         for record in self.state["articles"].values():
             if not record.get("breaking") or record.get("alert_delivered_at"):
                 continue
-            first_seen = self._parse_time(record.get("first_seen"))
-            if first_seen and self.now - first_seen <= timedelta(minutes=cooldown_minutes):
+            observed = self._parse_time(record.get("update_detected_at")) or self._parse_time(
+                record.get("first_seen")
+            )
+            if observed and timedelta(0) <= self.now - observed <= timedelta(minutes=cooldown_minutes):
                 candidates.append(record)
         if not candidates:
             return None
@@ -514,7 +829,15 @@ class DigestEngine:
         archive_path = self.archive_dir / "alerts" / f"{self.now.date().isoformat()}.md"
         existing = self.state["results"].get(result_id)
         if not existing:
-            result = self._result_from_records(result_id, "alert", selected, str(archive_path), True)
+            result = self._result_from_records(
+                result_id=result_id,
+                kind="alert",
+                records=selected,
+                archive_path=str(archive_path),
+                created_at=self.now.isoformat(),
+                period_name="突发与重要更新",
+                force_push=True,
+            )
             self._append_alert_markdown(result, archive_path)
             self.state["results"][result_id] = {
                 "kind": "alert",
@@ -524,7 +847,15 @@ class DigestEngine:
                 "delivered_at": None,
             }
             return result
-        return self._result_from_records(result_id, "alert", selected, str(archive_path), True)
+        return self._result_from_records(
+            result_id=result_id,
+            kind="alert",
+            records=selected,
+            archive_path=str(archive_path),
+            created_at=existing.get("created_at", ""),
+            period_name="突发与重要更新",
+            force_push=True,
+        )
 
     def _result_from_records(
         self,
@@ -532,6 +863,9 @@ class DigestEngine:
         kind: str,
         records: List[Dict[str, Any]],
         archive_path: str,
+        created_at: str = "",
+        period_key: Optional[str] = None,
+        period_name: str = "",
         force_push: bool = False,
     ) -> DigestResult:
         grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -551,7 +885,7 @@ class DigestEngine:
             for rank, record in enumerate(group, 1):
                 label = "突发" if record.get("breaking") else "更新" if record.get("status") == "updated" else ""
                 titles.append({
-                    "title": f"[{label}] {record['title']}" if label else record["title"],
+                    "title": record["title"],
                     "source_name": record.get("feed_name", "RSS"),
                     "time_display": record.get("published_at", ""),
                     "count": 1,
@@ -576,7 +910,17 @@ class DigestEngine:
             item = dict(record)
             item["_id"] = record["id"]
             articles.append(item)
-        return DigestResult(result_id, kind, stats, articles, archive_path, force_push)
+        return DigestResult(
+            result_id=result_id,
+            kind=kind,
+            stats=stats,
+            articles=articles,
+            archive_path=archive_path,
+            created_at=created_at,
+            period_key=period_key,
+            period_name=period_name,
+            force_push=force_push,
+        )
 
     def _digest_archive_path(self, period_key: str) -> Path:
         month = self.now.strftime("%Y-%m")

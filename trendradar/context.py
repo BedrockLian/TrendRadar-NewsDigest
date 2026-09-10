@@ -320,6 +320,7 @@ class AppContext:
         standalone_data: Optional[Dict] = None,
         frequency_file: Optional[str] = None,
         report_metadata: Optional[Dict] = None,
+        homepage_snapshot: Optional[Any] = None,
         translate_report_func: Optional[Any] = None,
     ) -> str:
         """生成HTML报告"""
@@ -335,7 +336,7 @@ class AppContext:
             output_dir="output",
             date_folder=self.format_date(),
             time_filename=self.format_time(),
-            render_html_func=lambda *args, **kwargs: self.render_html(*args, rss_items=rss_items, rss_new_items=rss_new_items, ai_analysis=ai_analysis, standalone_data=standalone_data, **kwargs),
+            render_html_func=lambda *args, **kwargs: self.render_html(*args, rss_items=rss_items, rss_new_items=rss_new_items, ai_analysis=ai_analysis, standalone_data=standalone_data, homepage_snapshot=homepage_snapshot, **kwargs),
             report_metadata=report_metadata,
             translate_report_func=translate_report_func,
         )
@@ -350,6 +351,7 @@ class AppContext:
         rss_new_items: Optional[List[Dict]] = None,
         ai_analysis: Optional[Any] = None,
         standalone_data: Optional[Dict] = None,
+        homepage_snapshot: Optional[Any] = None,
     ) -> str:
         """渲染HTML内容"""
         return render_html_content(
@@ -365,6 +367,7 @@ class AppContext:
             ai_analysis=ai_analysis,
             show_new_section=self.show_new_section,
             standalone_data=standalone_data,
+            homepage_snapshot=homepage_snapshot,
         )
 
     # === 通知内容渲染 ===

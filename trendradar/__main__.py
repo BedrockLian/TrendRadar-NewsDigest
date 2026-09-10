@@ -22,7 +22,8 @@ from trendradar.storage import convert_crawl_results_to_news_data
 from trendradar.utils.time import DEFAULT_TIMEZONE, is_within_days, calculate_days_old
 from trendradar.ai import AIAnalyzer, AIAnalysisResult
 from trendradar.core.scheduler import ResolvedSchedule
-from trendradar.digest import DigestEngine, DigestResult
+from trendradar.digest import DigestEngine, DigestResult, HomepageSnapshot
+from trendradar.report.archive import build_index as build_briefing_index
 from trendradar.commands import check_all_versions, run_doctor, run_test_notification, handle_status_commands
 from trendradar.commands.version import _fetch_remote_version, _parse_version
 
@@ -90,6 +91,7 @@ class NewsAnalyzer:
         self._hotlist_total_count = 0
         self._digest_engine: Optional[DigestEngine] = None
         self._digest_result: Optional[DigestResult] = None
+        self._homepage_snapshot: Optional[HomepageSnapshot] = None
 
         # 初始化存储管理器（使用 AppContext）
         self._init_storage_manager()
@@ -125,7 +127,11 @@ class NewsAnalyzer:
 
     def _should_open_browser(self) -> bool:
         """判断是否应该打开浏览器"""
-        return not self.is_github_actions and not self.is_docker_container
+        return (
+            not self.is_github_actions
+            and not self.is_docker_container
+            and os.environ.get("TRENDRADAR_MANAGED_RUN") != "1"
+        )
 
     def _setup_proxy(self) -> None:
         """设置代理配置"""
@@ -788,6 +794,7 @@ class NewsAnalyzer:
                     "rss_source_total": self._rss_source_total,
                     "rss_source_failed": self._rss_source_failed,
                 },
+                homepage_snapshot=self._homepage_snapshot,
                 translate_report_func=translate_report_func,
             )
 
@@ -1422,16 +1429,21 @@ class NewsAnalyzer:
         # a briefing slot or when an urgent alert is ready.
         digest_config = self.ctx.config.get("DIGEST", {})
         self._digest_result = None
-        if digest_config.get("ENABLED", False) and raw_rss_items:
+        self._homepage_snapshot = None
+        if digest_config.get("ENABLED", False):
             self._digest_engine = DigestEngine(
                 digest_config,
                 now=self.ctx.get_time(),
                 ai_config=self.ctx.config.get("AI", {}),
             )
             self._digest_result = self._digest_engine.process(
-                raw_rss_items,
+                raw_rss_items or [],
                 period_key=schedule.period_key,
                 scheduled_push=schedule.push,
+            )
+            self._homepage_snapshot = self._digest_engine.build_homepage_snapshot(
+                raw_rss_items or [],
+                scheduler.publication_schedule(digest_config.get("SLOT_KEYS", [])),
             )
             if self._digest_result:
                 rss_items = self._digest_result.stats
@@ -1648,8 +1660,15 @@ class NewsAnalyzer:
             )
 
         if html_file:
+            archive_dir = Path(
+                self.ctx.config.get("DIGEST", {}).get(
+                    "ARCHIVE_DIR", "output/briefings"
+                )
+            )
+            archive_index = build_briefing_index(archive_dir)
             print(f"HTML报告已生成: {html_file}")
             print(f"最新报告已更新: output/html/latest/{self.report_mode}.html")
+            print(f"简报存档已更新: {archive_index}")
 
         # 发送通知
         if mode_strategy["should_send_notification"]:
@@ -1675,19 +1694,26 @@ class NewsAnalyzer:
 
         # 打开浏览器（仅在非容器环境）
         if self._should_open_browser() and html_file:
-            file_url = "file://" + str(Path(html_file).resolve())
-            print(f"正在打开HTML报告: {file_url}")
-            webbrowser.open(file_url)
+            output_dir = Path(
+                self.ctx.config.get("STORAGE", {})
+                .get("LOCAL", {})
+                .get("DATA_DIR", "output")
+            )
+            homepage = (output_dir / "index.html").resolve()
+            page_to_open = homepage if homepage.is_file() else Path(html_file).resolve()
+            page_url = page_to_open.as_uri()
+            print(f"正在打开HTML报告: {page_url}")
+            webbrowser.open(page_url)
         elif self.is_docker_container and html_file:
             print(f"HTML报告已生成（Docker环境）: {html_file}")
 
         return html_file
 
-    def run(self) -> None:
+    def run(self) -> bool:
         """执行分析流程"""
         try:
             if not self._initialize_and_check_config():
-                return
+                return False
 
             mode_strategy = self._get_mode_strategy()
 
@@ -1706,11 +1732,13 @@ class NewsAnalyzer:
                 rss_items=rss_items, rss_new_items=rss_new_items,
                 raw_rss_items=raw_rss_items, rss_new_urls=rss_new_urls
             )
+            return True
 
         except Exception as e:
             print(f"分析流程执行出错: {e}")
             if self.ctx.config.get("DEBUG", False):
                 raise
+            return False
         finally:
             # 清理资源（包括过期数据清理和数据库连接关闭）
             self.ctx.cleanup()
@@ -1778,17 +1806,20 @@ def main():
             }
 
         debug_mode = analyzer.ctx.config.get("DEBUG", False)
-        analyzer.run()
+        if not analyzer.run():
+            raise SystemExit(1)
     except FileNotFoundError as e:
         print(f"❌ 配置文件错误: {e}")
         print("\n请确保以下文件存在:")
         print("  • config/config.yaml")
         print("  • config/frequency_words.txt")
         print("\n参考项目文档进行正确配置")
+        raise SystemExit(1) from e
     except Exception as e:
         print(f"❌ 程序运行错误: {e}")
         if debug_mode:
             raise
+        raise SystemExit(1) from e
 
 
 if __name__ == "__main__":
