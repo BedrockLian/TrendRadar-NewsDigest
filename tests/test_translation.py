@@ -1,10 +1,13 @@
 """Tests for localising the workspace through the briefing engine."""
 
+import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
+from trendradar.core.loader import _load_digest_config
 from trendradar.digest import DigestEngine
 
 from tests.test_digest import item
@@ -422,9 +425,9 @@ class TranslationTest(unittest.TestCase):
         engine = DigestEngine(config, self.now, translator=translator)
         engine.process(self.make_items(16), None, False)
 
-        # 16 records -> 2 batches of 8, plus a bounded retry allowance.
+        # 16 records -> 2 batches of 8, plus the 8-call retry allowance.
         self.assertLessEqual(
-            len(translator.calls), 8 + 50,
+            len(translator.calls), 11,
             "the per-pass call budget must cap the fan-out",
         )
         self.assertEqual(engine.translation_cache["entries"], {})
@@ -500,6 +503,78 @@ class TranslationTest(unittest.TestCase):
 
         # 3 records x (title + summary) = 6 texts, never all 40.
         self.assertEqual(sum(len(call) for call in translator.calls), 6)
+
+
+class TranslationPacingTest(unittest.TestCase):
+    """The per-run translation limits must be real knobs, and they must bite.
+
+    Production symptom these pin: every crawl spent ~9 minutes inside the
+    translation pass, because a refused batch was recursively halved and the
+    call budget was counted from the whole ~2300-article backlog instead of
+    from the few records the ceiling actually queued.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.now = datetime(2026, 9, 11, 8, 0, tzinfo=timezone.utc)
+        self.config = {
+            "ARCHIVE_DIR": str(Path(self.temp.name) / "briefings"),
+            "RETENTION_DAYS": 30,
+            "TRANSLATION": {"BATCH_SIZE": 40, "MAX_NEW_PER_RUN": 40, "MAX_RETRY_CALLS": 8},
+        }
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_yaml_limits_reach_the_engine(self):
+        limits = _load_digest_config({"digest": {"translation": {
+            "batch_size": 7, "max_new_per_run": 11, "max_retry_calls": 3}}})["TRANSLATION"]
+        self.assertEqual(
+            limits, {"BATCH_SIZE": 7, "MAX_NEW_PER_RUN": 11, "MAX_RETRY_CALLS": 3}
+        )
+
+    def test_environment_overrides_the_file(self):
+        with mock.patch.dict(os.environ, {"TRANSLATION_MAX_NEW_PER_RUN": "20"}):
+            limits = _load_digest_config(
+                {"digest": {"translation": {"max_new_per_run": 11}}}
+            )["TRANSLATION"]
+        self.assertEqual(limits["MAX_NEW_PER_RUN"], 20)
+
+    def test_defaults_bound_a_run(self):
+        limits = _load_digest_config({"digest": {}})["TRANSLATION"]
+        self.assertEqual(
+            limits, {"BATCH_SIZE": 40, "MAX_NEW_PER_RUN": 40, "MAX_RETRY_CALLS": 8}
+        )
+
+    def test_call_budget_follows_the_queue_not_the_pool(self):
+        """A huge pool must not licence a huge call budget.
+
+        Every crawl hands the engine the whole tracked backlog; only the
+        ceiling's few dozen records may be paid for in one run.
+        """
+
+        class AlwaysRefusing(StubTranslator):
+            def translate_batch(self, texts):
+                self.calls.append(list(texts))
+                batch = StubBatch([StubTranslation(t) for t in texts])
+                batch.parsed_count = 0
+                return batch
+
+        translator = AlwaysRefusing()
+        engine = DigestEngine(self.config, self.now, translator=translator)
+        pool = [
+            {"title": f"story {index}", "summary": f"summary {index}",
+             "content_hash": f"hash-{index}"}
+            for index in range(2000)
+        ]
+
+        engine._translate_articles(pool)
+
+        # 40 records queued -> 1 batch, plus the 8-call retry allowance.
+        self.assertLessEqual(
+            len(translator.calls), 10,
+            "a 2000-article pool must not authorise ~100 calls",
+        )
 
 
 if __name__ == "__main__":

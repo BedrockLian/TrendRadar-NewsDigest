@@ -395,6 +395,16 @@ digest:
     enabled: true                     # 无 Key 时回退 RSS 简介，有 Key 时自动生成中文简介
     batch_size: 20
 
+  # 工作台正文翻译的节奏控制（需 AI_TRANSLATION_ENABLED=true 才生效）
+  # 实测一次 API 调用约 3~9 秒；这三个上限决定单轮最多花多少次调用，
+  # 让每轮采集停在 2~3 分钟，而不是逼近 systemd 的 900 秒硬超时。
+  # 环境变量 TRANSLATION_BATCH_SIZE / TRANSLATION_MAX_NEW_PER_RUN /
+  # TRANSLATION_MAX_RETRY_CALLS 可覆盖这里的值。
+  translation:
+    batch_size: 40                    # 每次请求提交的记录数（标题+摘要 = 2 倍文本条数）
+    max_new_per_run: 40               # 单轮最多为多少条新记录付费（积压按轮次回填）
+    max_retry_calls: 8                # 被内容风控拒绝后允许的切分/重试调用次数
+
   weekly:
     enabled: true
     weekday: 7

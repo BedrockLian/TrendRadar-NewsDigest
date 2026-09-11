@@ -159,7 +159,10 @@ scp .\待上传文件 campus-server:/tmp/
 
 启用 `AI_TRANSLATION_ENABLED` 后，`DigestEngine` 在投影前为文章补上译文，因此**简报、
 简报后更新、全部新闻**三处一起中文化（详见 4.4）。译文按 `content_hash` 缓存，同一篇文章
-只翻译一次；单轮上限 `TRANSLATION.MAX_NEW_PER_RUN`（默认 120）控制积压回填速度。
+只翻译一次；积压回填的速度由 `config/config.yaml` 的 `digest.translation` 控制
+（`batch_size` / `max_new_per_run` / `max_retry_calls`，默认 40 / 40 / 8），
+对应的环境变量 `TRANSLATION_BATCH_SIZE` / `TRANSLATION_MAX_NEW_PER_RUN` /
+`TRANSLATION_MAX_RETRY_CALLS` 可以覆盖文件值。
 
 未启用、未配置 `AI_API_KEY` 或接口失败时，页面回落到原始 RSS 文本，行为与加入该功能前一致。
 
@@ -249,7 +252,22 @@ Docker 部署另有其路径：`http.server` 在容器内提供 `/app/public`（
   多存一份翻译，既有状态文件也不需要迁移；
 - 关掉 `AI_TRANSLATION_ENABLED` 后引擎行为与加入翻译功能前完全一致。
 
-单次运行的翻译量上限由 `TRANSLATION.MAX_NEW_PER_RUN`（默认 120）控制，避免积压时出现意外账单。
+单次运行的翻译量上限由 `config/config.yaml` 的 `digest.translation` 控制，避免积压时出现意外账单：
+
+| 键 | 默认 | 含义 |
+| --- | ---: | --- |
+| `batch_size` | 40 | 每次请求提交的记录数（标题 + 摘要 = 2 倍文本条数） |
+| `max_new_per_run` | 40 | 单轮最多为多少条新记录付费 |
+| `max_retry_calls` | 8 | 被内容风控拒绝后允许的切分/重试调用次数 |
+
+环境变量 `TRANSLATION_BATCH_SIZE` / `TRANSLATION_MAX_NEW_PER_RUN` / `TRANSLATION_MAX_RETRY_CALLS`
+优先于文件值。这三个值经 `_load_digest_config()` 进入引擎的 `TRANSLATION` 段。
+
+**单轮内的 API 调用预算是按「本轮实际排队的记录数」算的，不是按整池。** 每轮采集会把整份
+约 2300 条的在册文章交给引擎，若按池算就会授权约 100 次调用。旧实现正是这样：一次被风控
+拒绝的批次会递归对半切分，外加 48 次重试额度，把单轮翻译拖到 8~9 分钟（实测调用约 3~9 秒/
+次，2026-09-11 23:00 那轮采集总耗时 9 分 46 秒，其中 8 分 21 秒花在这一步，systemd 的硬超时
+是 900 秒）。现在单轮上限为「排队批次数 + 8」次调用，正常情况下就是 1 次调用、约 10 秒。
 
 ### 4.5 选稿配额
 
@@ -668,6 +686,17 @@ Docker CLI 在当前 Windows 开发机不可用，因此本地没有执行完整
 2. 查看 service/container 日志；
 3. 不要直接删除锁文件来打断仍在运行的进程；
 4. 进程退出后 OS 锁会释放，锁文件本身保留不影响下一次运行。
+
+### 采集每轮跑 10 分钟以上
+
+1. 看服务日志里「[调度] 行为: 采集」到下一行之间的空档——那一整段就是本轮的翻译回填，
+   引擎在这一步不打日志；
+2. 用 `systemctl show trendradar-collect.service -p ExecMainStartTimestamp` 与日志里的
+   Starting/Deactivated 相减得到真实耗时；
+3. 核对 `digest.translation` 与 `TRANSLATION_*` 环境变量是否被改大（详见 4.4）；
+4. 看 `output/briefings/.translations.json` 的 `entries` 是否在增长：不增长说明请求都被拒了；
+5. 不要在生产里加插桩再跑——在 `/tmp` 用 `/opt/trendradar/.venv/bin/python` 单独调用
+   `AITranslator.translate_batch` 测批次耗时与成败（`ops/probe_batch.py` 就是这个用途）。
 
 ### Windows 控制台报编码错误
 

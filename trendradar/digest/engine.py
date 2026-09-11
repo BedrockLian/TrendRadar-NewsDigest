@@ -679,13 +679,10 @@ class DigestEngine:
         # Bound on how many *new* records one run will pay for, so a large
         # backlog can never produce a surprise API bill; the cache catches up
         # over the following runs.  ``None`` means unbounded.
-        ceiling = None if ignore_ceiling else max(0, int(settings.get("MAX_NEW_PER_RUN", 120)))
-        # Total API calls this pass may make, including split retries.  Generous
-        # enough for normal batches (one call each) plus isolating a few refused
-        # stories, but bounded so a broadly-filtered pool cannot hold the run.
-        budget = (len(records) // batch_size) + 1
-        retry_budget = max(4, min(4 * batch_size, int(settings.get("MAX_RETRY_CALLS", 48))))
-        self._translation_calls_left = budget + retry_budget
+        ceiling = None if ignore_ceiling else max(0, int(settings.get("MAX_NEW_PER_RUN", 40)))
+        # Extra calls allowed on top of the queued batches, for splitting a
+        # refused batch down to the offending story.
+        retry_calls = max(2, int(settings.get("MAX_RETRY_CALLS", 8)))
 
         entries = self.translation_cache["entries"]
         pending: List[Dict[str, Any]] = []
@@ -729,6 +726,14 @@ class DigestEngine:
                 continue
             pending.append(record)
             queued_here += 1
+
+        # Total API calls this pass may make, including split retries.  Counted
+        # from the work actually queued, NOT from the pool handed in: every
+        # crawl passes the whole tracked backlog (~2000 articles), so a
+        # pool-sized budget licensed ~100 calls and one broadly-filtered pass
+        # held the run for nine minutes against the 900 s systemd timeout.
+        budget = (len(pending) + batch_size - 1) // batch_size + 1
+        self._translation_calls_left = budget + max(2, min(4 * batch_size, retry_calls))
 
         translated_count = 0
         for offset in range(0, len(pending), batch_size):
