@@ -11,11 +11,11 @@ from tests.test_digest import item
 
 
 class StubTranslation:
-    def __init__(self, translated_text="", success=True):
+    def __init__(self, translated_text="", success=True, error=""):
         self.translated_text = translated_text
         self.original_text = ""
         self.success = success
-        self.error = ""
+        self.error = error
 
 
 class StubBatch:
@@ -50,6 +50,29 @@ class FailOnceTranslator(StubTranslator):
         if self.failures == 1:
             raise RuntimeError("upstream 500")
         return super().translate_batch(texts)
+
+
+class PoisonTranslator(StubTranslator):
+    """Refuses any batch containing a chosen marker word.
+
+    Mirrors the provider behaviour that caused the production outage: the
+    request fails as a whole, and AITranslator reports the error per item while
+    echoing the source text back.
+    """
+
+    def __init__(self, poison="poison", prefix="【译】"):
+        super().__init__(prefix=prefix)
+        self.poison = poison
+
+    def translate_batch(self, texts):
+        self.calls.append(list(texts))
+        if any(self.poison in text for text in texts):
+            return StubBatch([
+                StubTranslation(text, success=False,
+                                error="BadRequestError: Content Exists Risk")
+                for text in texts
+            ])
+        return StubBatch([StubTranslation(f"{self.prefix}{text}") for text in texts])
 
 
 class TranslationTest(unittest.TestCase):
@@ -275,6 +298,27 @@ class TranslationTest(unittest.TestCase):
         self.assertEqual(
             len(merged), 4,
             "an entry written by the first engine disappeared",
+        )
+
+    def test_one_rejected_item_does_not_lose_the_whole_batch(self):
+        """A provider refusal must not discard the other stories in the batch.
+
+        Production symptom this pins: one risky headline made a 240-text request
+        fail, the parser echoed every input, and the run cached nothing at all.
+        """
+        translator = PoisonTranslator(poison="poison")
+        config = dict(self.config, TRANSLATION={"BATCH_SIZE": 8, "MAX_NEW_PER_RUN": 50})
+        engine = DigestEngine(config, self.now, translator=translator)
+
+        items = self.make_items(4)
+        items[1]["title"] = "poison headline that the provider refuses"
+        engine.process(items, None, False)
+
+        entries = engine.translation_cache["entries"]
+        translated = [v for v in entries.values() if v.get("title_zh", "").startswith("【译】")]
+        self.assertEqual(len(translated), 3, "the other three stories must survive")
+        self.assertLessEqual(
+            len(translator.calls), 12, "splitting must terminate, not retry forever"
         )
 
     def test_backfill_does_not_stall_on_a_pool_larger_than_the_ceiling(self):

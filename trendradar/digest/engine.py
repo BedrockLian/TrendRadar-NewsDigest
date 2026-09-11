@@ -163,6 +163,9 @@ class DigestEngine:
         # Keys this instance deliberately dropped.  The merge in
         # ``_save_translation_cache`` must not resurrect them from disk.
         self._translation_removed: set = set()
+        # One diagnostic per run is enough; a refused batch would otherwise
+        # print for every retry.
+        self._translation_error_logged = False
 
     def process(
         self,
@@ -543,6 +546,67 @@ class DigestEngine:
                     return str(translated)
         return str(record.get(field) or "")
 
+    def _translate_texts(self, texts: List[str]) -> Optional[List[str]]:
+        """Translate ``texts``, splitting the batch when the provider refuses it.
+
+        A single rejected item poisons the whole request: the provider answers
+        with a batch-level error and the parser falls back to echoing every
+        input, so nothing gets translated and the caller correctly discards the
+        lot.  Retrying as two halves isolates the offending item instead of
+        losing the other hundreds of texts with it.
+        """
+
+        try:
+            result = self.translator.translate_batch(texts)
+        except Exception as exc:  # noqa: BLE001 - enrichment must never break a run
+            if not self._translation_error_logged:
+                print(f"[简报] 翻译请求失败: {type(exc).__name__}: {str(exc)[:120]}")
+                self._translation_error_logged = True
+            return None
+
+        results = getattr(result, "results", None)
+        if not results:
+            return None
+        if len(results) < len(texts):
+            return None
+
+        translated = [(item.translated_text or "").strip() for item in results]
+        failed = any(str(getattr(item, "error", "") or "") for item in results)
+
+        if not failed:
+            return translated
+
+        # The request was refused.  AITranslator catches the provider error and
+        # reports it per item while echoing the source text back, so the failure
+        # has to be read from ``error`` -- the echoed text looks like a
+        # successful translation otherwise.  Split the batch to isolate the
+        # offending item instead of losing every text in it.
+        if len(texts) <= 2:
+            if not self._translation_error_logged:
+                reason = next(
+                    (str(getattr(item, "error", "")) for item in results
+                     if str(getattr(item, "error", "") or "")),
+                    "",
+                )
+                print(f"[简报] 翻译被拒绝，放弃 {len(texts)} 条: {reason[:100]}")
+                self._translation_error_logged = True
+            return None
+
+        middle = max(1, len(texts) // 2)
+        if middle % 2:
+            # Keep title/summary pairs together when splitting.
+            middle += 1
+        middle = min(middle, len(texts) - 1)
+        left = self._translate_texts(texts[:middle])
+        right = self._translate_texts(texts[middle:])
+        if left is None and right is None:
+            return None
+        if left is None:
+            return [""] * middle + right
+        if right is None:
+            return left + [""] * (len(texts) - middle)
+        return left + right
+
     def _translate_articles(
         self, records: List[Dict[str, Any]], *, ignore_ceiling: bool = False
     ) -> int:
@@ -574,16 +638,22 @@ class DigestEngine:
         queued_here = 0
         for record in records:
             if ceiling is not None and queued_here >= ceiling:
-                break
+                # Deferred by the ceiling, not a failure.  Remember it so the
+                # next bounded pass makes progress instead of re-queueing the
+                # same leading records forever.
+                key = str(record.get("content_hash") or "")
+                if key:
+                    self._translation_attempted.add(key)
+                continue
             key = str(record.get("content_hash") or "")
             if not key:
                 continue
             if isinstance(entries.get(key), dict):
                 continue
             # The bounded backfill pass must not re-queue what an earlier
-            # backfill pass deferred, or a pool larger than the ceiling never
-            # makes progress.  The unbounded pass (the briefing's own selection)
-            # deliberately ignores this and translates whatever is missing.
+            # backfill pass deferred.  The unbounded pass (the briefing's own
+            # selection) deliberately ignores this and translates whatever is
+            # still missing.
             if ceiling is not None and key in self._translation_attempted:
                 continue
             if not self._needs_translation(str(record.get("title") or "")) and not (
@@ -604,36 +674,18 @@ class DigestEngine:
         translated_count = 0
         for offset in range(0, len(pending), batch_size):
             batch = pending[offset : offset + batch_size]
-            # Mark before the call so a second pass in this same run never
-            # re-queues these, even if the call fails.
-            for record in batch:
-                key = str(record.get("content_hash") or "")
-                if key:
-                    self._translation_attempted.add(key)
             texts: List[str] = []
             for record in batch:
                 texts.append(str(record.get("title") or ""))
                 texts.append(str(record.get("summary") or ""))
 
-            try:
-                result = self.translator.translate_batch(texts)
-            except Exception as exc:  # noqa: BLE001 - enrichment must never break a run
-                print(f"[简报] 翻译失败，保留原文: {type(exc).__name__}: {str(exc)[:120]}")
-                break
-
-            if not getattr(result, "results", None):
-                print("[简报] 翻译未返回结果，保留原文")
-                break
-
-            if len(result.results) < len(batch) * 2:
-                print("[简报] 翻译结果数量不足，保留原文")
-                break
+            translated = self._translate_texts(texts)
+            if translated is None:
+                continue
 
             for index, record in enumerate(batch):
-                title_result = result.results[index * 2]
-                summary_result = result.results[index * 2 + 1]
-                title_zh = (title_result.translated_text or "").strip()
-                summary_zh = (summary_result.translated_text or "").strip()
+                title_zh = translated[index * 2]
+                summary_zh = translated[index * 2 + 1]
                 # The parser falls back to the original text on failure, so only
                 # accept a translation that actually changed the language.
                 if title_zh and self._needs_translation(title_zh):
