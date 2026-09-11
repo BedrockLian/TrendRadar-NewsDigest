@@ -507,7 +507,8 @@ class DigestEngine:
         return {"version": 1, "entries": {}}
 
     def _save_translation_cache(self) -> None:
-        self.archive_dir.mkdir(parents=True, exist_ok=True)
+        target = self.translation_cache_path
+        target.parent.mkdir(parents=True, exist_ok=True)
         # Another DigestEngine (the notification pipeline creates its own) may
         # have written translations since this instance loaded the file.  Merge
         # rather than overwrite, or the two passes trade their work back and
@@ -516,12 +517,15 @@ class DigestEngine:
             if key in self._translation_removed:
                 continue
             self.translation_cache["entries"].setdefault(key, value)
-        temp_path = self.translation_cache_path.with_suffix(".tmp")
+        # The temp file must sit beside its target: ``os.replace`` is only
+        # atomic within one filesystem, and a cross-device move raises here,
+        # which would abort the rest of the run.
+        temp_path = target.with_name(target.name + ".tmp")
         temp_path.write_text(
             json.dumps(self.translation_cache, ensure_ascii=False),
             encoding="utf-8",
         )
-        os.replace(temp_path, self.translation_cache_path)
+        os.replace(temp_path, target)
 
     @staticmethod
     def _needs_translation(text: str) -> bool:
