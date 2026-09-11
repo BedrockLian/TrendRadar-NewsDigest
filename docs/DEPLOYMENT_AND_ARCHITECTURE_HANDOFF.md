@@ -135,6 +135,34 @@ scp .\待上传文件 campus-server:/tmp/
 
 浏览器只接收白名单化后的公开字段。链接必须是有效的 `http` 或 `https` URL，动态文字通过 `textContent` 写入，内嵌 JSON 会转义 `</script>`、`&`、U+2028 和 U+2029。
 
+### 3.4 载荷拆分
+
+首页不再把所有内容内联。`homepage-data` 只带渲染首屏必需的东西：
+
+```json
+{
+  "updates": [12, 40, 41],          // 指向 allNews 的下标，不是第二份文章对象
+  "allNews": [{ "title", "url", "published_at", "category_id", "status", "_si", "_ci" }],
+  "categories": ["科技与 AI", ...],  // 分类名查表
+  "sources": ["WIRED", ...]         // 来源名查表
+}
+```
+
+- `summary` **不在** `allNews` 里，它随 `briefings-summaries.json` 首屏之后再取；页面同时内联
+  一份副本作为 `file://` 打开和请求失败时的兜底，取到后重渲染一次；
+- `_si` / `_ci` 是 `sources` / `categories` 的下标，客户端水合时还原成显示字符串；
+- `updates` 是下标数组，避免把「简报后更新」的条目整份复制一遍。
+
+实测（生产数据 876 篇）：首屏 gzip **152.9 KB → 81.6 KB**，内联载荷 raw **464.6 KB → 236.9 KB**。
+
+### 3.5 正文翻译
+
+启用 `AI_TRANSLATION_ENABLED` 后，`DigestEngine` 在投影前为文章补上译文，因此**简报、
+简报后更新、全部新闻**三处一起中文化（详见 4.4）。译文按 `content_hash` 缓存，同一篇文章
+只翻译一次；单轮上限 `TRANSLATION.MAX_NEW_PER_RUN`（默认 120）控制积压回填速度。
+
+未启用、未配置 `AI_API_KEY` 或接口失败时，页面回落到原始 RSS 文本，行为与加入该功能前一致。
+
 ## 4. 技术结构
 
 ### 4.1 主数据流
@@ -178,16 +206,20 @@ systemd timer / Docker supercronic / 手动命令
 | 文件 | 责任 |
 | --- | --- |
 | `trendradar/__main__.py` | 主流程；采集后创建 `DigestEngine`、`HomepageSnapshot`，生成 HTML，并在通知成功后记录投递 |
-| `trendradar/context.py` | 把首页快照传给报告生成链路；即使当前抓取为空也保留最近简报 |
+| `trendradar/context.py` | 把首页快照传给报告生成链路；即使当前抓取为空也保留最近简报；提供 `create_translator` |
 | `trendradar/core/scheduler.py` | 解析三时段配置，计算 08:00/12:30/20:00 状态和下一次推送 |
-| `trendradar/digest/engine.py` | 观察文章、去重、分类、选稿、突发判断、简报状态、Markdown 存档和公开快照 |
-| `trendradar/report/html.py` | 无前端框架、无 CDN 的首页 HTML/CSS/JS；服务端渲染简报，客户端处理更新和全部新闻 |
+| `trendradar/digest/engine.py` | 观察文章、去重、分类、选稿、突发判断、简报状态、Markdown 存档和公开快照；持有翻译缓存并做投影本地化 |
+| `trendradar/report/html.py` | 首页 HTML 拼装；服务端渲染简报，构建精简载荷与摘要旁车文件 |
+| `trendradar/report/workspace_template.py` | 首页 HTML/CSS/JS 模板本体（占位符由 `html.py` 替换） |
 | `trendradar/report/archive.py` | 扫描 Markdown，生成 `briefings/index.html` 归档页；主程序与发布器共用 |
 | `deployment/run_once.py` | 用整轮运行锁串行化“采集 → 生成 → 发布” |
-| `deployment/publish_static.py` | 构建公开文件白名单、生成归档索引、整体切换公开目录 |
+| `deployment/publish_static.py` | 构建公开文件白名单、生成归档索引、写出 gzip 边车、整体切换公开目录 |
+| `deployment/compress.py` | 为公开目录中的文本资产生成确定性 `.gz` 边车（发布时一次） |
+| `deployment/serve_public.py` | 生产静态服务器；优先返回 `.gz` 边车，带 ETag/304 与路径穿越防护 |
 | `deployment/run.sh` | 校园服务器 systemd 的单次入口 |
 | `deployment/trendradar-collect.service` | systemd oneshot、权限限制和资源限制 |
 | `deployment/trendradar-collect.timer` | 每 30 分钟唤醒一次 |
+| `deployment/trendradar-web.service` | 静态站点服务单元（绑定 `127.0.0.1:18080`，由 Nginx 反代） |
 | `docker/entrypoint.sh` | Docker once/cron 启动流程 |
 | `docker/manage.py` | Docker 内手动运行、状态和静态服务器管理 |
 
@@ -201,6 +233,35 @@ systemd timer / Docker supercronic / 手动命令
 
 这个文件必须随 `output` 持久化。丢失它会丢失精确的历史发现时间、投递记录和最近简报引用。它是运行数据，不得复制到公开目录。
 
+### 4.4 翻译缓存
+
+`output/briefings/.translations.json` 是**独立的**滚动缓存，按 `content_hash` 索引每篇文章的
+`title_zh` / `summary_zh`：
+
+- 与 `.state.json` 分开存放是刻意的：丢失缓存只损失金钱（会重新翻译），丢失状态则损失正确性；
+- 缓存条目在 `_prune_translation_cache()` 中按 `articles` 存活集合回收；
+- `Engine._localized(record, field)` 在**投影时**解析译文，因此 `.state.json` 不会为每篇文章
+  多存一份翻译，既有状态文件也不需要迁移；
+- 关掉 `AI_TRANSLATION_ENABLED` 后引擎行为与加入翻译功能前完全一致。
+
+单次运行的翻译量上限由 `TRANSLATION.MAX_NEW_PER_RUN`（默认 120）控制，避免积压时出现意外账单。
+
+### 4.5 选稿配额
+
+`config/config.yaml` 的 `digest.categories[].quota` 是**总量**而非增量，`_select()` 分四轮：
+
+1. **预配额轮** — 突发与「更新」条目优先。非突发更新最多占一半席位，且任何板块在此轮都不得
+   超过自身配额（突发不受限）。`status: updated` 是**粘性标记**，池中很容易多过整期容量，
+   不设这两道闸门会让后面的配额轮完全执行不到。
+2. **配额轮** — 各板块按 `current >= quota` 精确填充；`current` 计入预配额轮已占席位。
+3. **借调轮** — 用剩余席位按分数补齐，沿用 `source_limit` 保持来源多样性。
+4. **兜底轮** — 若仅因 `source_limit` 无法凑满 `max_items`，放宽来源限制补齐。
+
+`source_limit` 是多样性目标而非绝对约束：当某板块的候选几乎全来自一个高频源时（例如
+`tech_ai` 的 24 条候选里 22 条来自 WIRED），严格按上限会让「配额 6」变成「实际 0」。因此
+**在填充本板块保留份额时允许超出该上限**，被放宽的源会记入 `relaxed_sources`，后续借调轮
+仍视其为已耗尽。
+
 ## 5. 私有输出与公开输出
 
 ### 5.1 私有 `output`
@@ -210,8 +271,10 @@ systemd timer / Docker supercronic / 手动命令
 ```text
 output/
 ├── index.html
+├── briefings-summaries.json      ← 首页摘要旁车（会发布）
 ├── briefings/
 │   ├── .state.json
+│   ├── .translations.json        ← 翻译缓存（只有 AI 翻译启用时存在）
 │   ├── YYYY-MM/*.md
 │   ├── alerts/*.md
 │   └── weekly/*.md
@@ -222,21 +285,40 @@ output/
 └── 其他采集快照
 ```
 
-不要让 Nginx、`http.server` 或容器端口直接指向 `output`。
+不要让 Nginx、`serve_public` 或容器端口直接指向 `output`。
 
 ### 5.2 公开 `public`
 
-发布器每次从空的唯一临时目录构建完整站点，允许出现的文件只有：
+发布器每次从空的唯一临时目录构建完整站点。**源文件**白名单只有：
 
 ```text
 public/
 ├── index.html
+├── briefings-summaries.json      ← 按文件名精确放行，可选
 └── briefings/
-    ├── index.html
+    ├── index.html                ← 发布器生成
     └── **/*.md
 ```
 
-发布器不会复制数据库、`.state.json`、抓取快照、日志或符号链接。它会整体替换旧 `public`，因此旧版本遗留的私有文件也会被清除。
+除这些源文件外，发布器还会为每个文本资产生成确定性的 `<name>.gz` 边车，因此实际发布结果形如：
+
+```text
+public/
+├── index.html
+├── index.html.gz
+├── briefings-summaries.json
+├── briefings-summaries.json.gz
+└── briefings/
+    ├── index.html
+    ├── index.html.gz
+    └── **/*.md  +  **/*.md.gz
+```
+
+`.gz` 是**已公开内容**的派生表示，不是新的信息面；发布器的**源白名单**没有放宽，所以
+`.state.json`、`.translations.json`、数据库、抓取快照、日志和符号链接依旧不会被复制，
+它们的 `.gz` 自然也不会出现。第 9.2 节的目录校验已相应更新。
+
+发布器会整体替换旧 `public`，因此旧版本遗留的私有文件（含其边车）也会被清除。
 
 `output` 与 `public` 必须是两个互不包含的独立目录树；发布器会拒绝相同路径、父子路径和文件系统根目录，防止错误参数覆盖项目或私有输出。
 
@@ -362,11 +444,44 @@ trendradar-collect.timer
 - `ProtectSystem=strict`；
 - 仅 `/opt/trendradar` 可写。
 
-环境变量位于 `/opt/trendradar/config/news-digest.env`，不要把值写进仓库或交接文档。该文件应由 `root:trendradar` 持有并设为 `0640`。
+环境变量位于 `/opt/trendradar/config/news-digest.env`，不要把值写进仓库或交接文档。该文件应由 `trendradar:trendradar` 持有并设为 `0640`。
+
+> **写入该文件的坑**：`AI_API_BASE=` 这一行在文件末尾，**没有结尾换行符**。用
+> `printf '...\n' >> file` 追加会把新键**粘到 `AI_API_BASE=` 的值上**，产生类似
+> `AI_API_BASE=AI_TRANSLATION_ENABLED=true` 的结果，systemd 会把整个字符串当成 API base，
+> 而该键本身消失。追加后务必用 `awk -F= '{print $1" len="length($2)}'` 核对，或干脆整份重写
+> 文件（用 `install -m 0640 -o trendradar -g trendradar` 落地）。systemd 的 `EnvironmentFile`
+> 会剥掉行尾 `\r`，所以 CRLF 本身不是问题；但混用 CRLF/LF 会让 `sed -i` 的 `^` 锚点失配。
 
 AI 简介使用 `AI_API_KEY`、`AI_MODEL`，兼容接口按需增加 `AI_API_BASE`。没有密钥或接口失败时，简报和统计周报仍使用 RSS 摘要生成。通知复用项目现有环境变量，例如 `FEISHU_WEBHOOK_URL`、`DINGTALK_WEBHOOK_URL`、`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` 和邮件变量；未配置渠道时只采集并生成网页与 Markdown。
 
-Nginx 应把 `https://news.blian117.dpdns.org/` 指向 `/opt/trendradar/public`。
+启用工作台正文翻译需同时设置 `AI_TRANSLATION_ENABLED=true`（可选 `AI_TRANSLATION_LANGUAGE`，
+默认取 `config.yaml` 的 `ai_translation.language`）。两者都通过环境变量覆盖配置文件。
+
+### 7.5 生产访问链路（实测）
+
+交接文档早期版本写的「Nginx 把站点指向 `/opt/trendradar/public`」**与实际不符**。真实链路是：
+
+```text
+浏览器
+  └── Nginx（宝塔，/www/server/nginx，监听 443，HTTP/3 已开）
+        └── location ^~ /  →  proxy_pass http://127.0.0.1:18080/
+              └── systemd: trendradar-web.service
+                    └── python -m deployment.serve_public
+                          --directory /opt/trendradar/public --port 18080 --bind 127.0.0.1
+```
+
+要点：
+
+- Nginx **不直接读**站点根。宝塔面板里的站点根 `/www/wwwroot/news.blian117.dpdns.org/`
+  只有一个 917 字节的占位 `index.html`（2026-09-08 遗留），**发布器从不写它**；
+- `serve_public` 优先返回发布时生成的 `.gz` 边车。此前的 `python -m http.server` 完全没有
+  `Content-Encoding` 支持，导致 Nginx 必须**对每个请求**现场压缩约 530 KB 的首页；
+- `trendradar-web.service` 绑定 `127.0.0.1`（Nginx 走环回），因此 18080 不对外暴露；
+- 代理块对所有非静态后缀强制 `Cache-Control: no-cache`。这是合理的（首页每轮都变），
+  但意味着每次访问都会回源；预压缩把这部分成本压到最低。
+
+改动该链路（换服务器、换端口、换反代）时必须同时更新 `deployment/trendradar-web.service`。
 
 ## 8. 生产发布工作流
 
@@ -442,13 +557,18 @@ Shell 语法可用 Git for Windows 验证：
 
 ### 9.2 公共目录安全验证
 
-发布后，递归文件列表只能匹配：
+发布后，递归文件列表只能匹配（每一条都允许出现对应的 `.gz` 边车）：
 
 ```text
 index.html
+briefings-summaries.json
 briefings/index.html
 briefings/**/*.md
 ```
+
+也就是说，任何**不以 `.gz` 结尾**的文件都必须匹配上述四条之一；`.gz` 文件必须恰好是某个
+匹配文件的 `<name>.gz`。不允许出现 `.state.json`、`.translations.json`、数据库或快照，
+自然也不允许出现它们的 `.gz`。
 
 线上必须返回：
 
@@ -456,9 +576,15 @@ briefings/**/*.md
 GET /                                  200
 GET /briefings/                        200
 GET /briefings/<实际简报>.md           200
+GET /briefings-summaries.json          200
 GET /briefings/.state.json             404
+GET /briefings/.state.json.gz          404
 GET /rss/<任意数据库>.db               404
+GET /.state.json                       404
 ```
+
+同时确认预压缩生效：带 `Accept-Encoding: gzip` 的请求返回 `Content-Encoding: gzip`，
+`Content-Type` 描述**解码后**的表示（首页为 `text/html`，而不是 `application/gzip`）。
 
 ### 9.3 浏览器验证
 

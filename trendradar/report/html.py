@@ -244,10 +244,13 @@ def _render_digest(
     for section in digest.sections:
         category = str(section.get("name") or "其他重要新闻")
         count = int(section.get("count") or 0)
-        filters.append(
-            f'<button class="digest-filter" type="button" data-category="{html_escape(category)}" aria-pressed="false"'
-            f'{" disabled" if count == 0 else ""}>{html_escape(category)} <span>{count}</span></button>'
-        )
+        # A section with nothing in it is not a useful filter; showing "科技与 AI 0"
+        # just adds noise to the chip row.
+        if count > 0:
+            filters.append(
+                f'<button class="digest-filter" type="button" data-category="{html_escape(category)}" aria-pressed="false">'
+                f'{html_escape(category)} <span>{count}</span></button>'
+            )
         for item in section.get("articles", []):
             index += 1
             status = str(item.get("status") or "")
@@ -288,9 +291,11 @@ def _render_sidebar_categories(snapshot: Optional[HomepageSnapshot]) -> str:
     for section in digest.sections:
         category = str(section.get("name") or "其他重要新闻")
         count = int(section.get("count") or 0)
+        if count == 0:
+            continue
         buttons.append(
             f'<button class="sidebar-category digest-filter" type="button" data-category="{html_escape(category)}" '
-            f'aria-pressed="false"{" disabled" if count == 0 else ""}>'
+            f'aria-pressed="false">'
             f'<span>{html_escape(category)}</span><strong>{count}</strong></button>'
         )
     return "".join(buttons)

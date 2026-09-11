@@ -277,6 +277,26 @@ class HomepagePayloadShapeTest(unittest.TestCase):
         self.assertEqual(self.payload(document)["updates"], [])
 
 
+    def test_empty_sections_do_not_render_filter_chips(self):
+        """A section with nothing in it is not a useful filter."""
+        snapshot = self.snapshot
+        # make_homepage_snapshot gives 全球事务 count 0 and 科技与 AI count 1.
+        document = render_html_content({}, 0, homepage_snapshot=snapshot)
+
+        self.assertIn("科技与 AI", document)
+        self.assertNotIn('data-category="全球事务"', document)
+        # The empty section is still listed in the payload's category options.
+        self.assertIn("全球事务", document)
+
+    def test_empty_sections_do_not_render_sidebar_categories(self):
+        snapshot = self.snapshot
+        document = render_html_content({}, 0, homepage_snapshot=snapshot)
+        sidebar = document.split('class="sidebar-categories"', 1)[1].split("</div>", 1)[0]
+
+        self.assertIn("科技与 AI", sidebar)
+        self.assertNotIn("全球事务", sidebar)
+
+
 class SchedulerPublicationTest(unittest.TestCase):
     def test_publication_schedule_reports_three_slots_and_next_one(self):
         timeline = yaml.safe_load(Path("config/timeline.yaml").read_text(encoding="utf-8"))
