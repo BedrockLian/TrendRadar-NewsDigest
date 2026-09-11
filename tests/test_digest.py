@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -83,6 +84,180 @@ class DigestEngineTest(unittest.TestCase):
         self.assertIn("# 2026-09-09 早间新闻简报", content)
         self.assertIn("简介：", content)
         self.assertIn("https://example.com/", content)
+
+    def test_section_quota_survives_a_single_feed_dominating_its_pool(self):
+        """A section whose candidates all come from one feed must still get its share.
+
+        Production symptom this pins: 科技与 AI had quota 6 and 24 fresh
+        candidates, 22 of them from WIRED, so the per-source cap starved the
+        section to zero while 全球事务 (quota 2) took 10.
+        """
+        config = dict(
+            self.config,
+            DEDUP_SIMILARITY=1.0,
+            CATEGORIES=[
+                {"ID": "tech", "NAME": "科技与 AI", "QUOTA": 6, "WEIGHT": 1.6,
+                 "FEEDS": ["wired"], "KEYWORDS": []},
+                {"ID": "world", "NAME": "全球事务", "QUOTA": 2, "WEIGHT": 1.0,
+                 "FEEDS": ["world1", "world2", "world3", "world4"], "KEYWORDS": []},
+            ],
+        )
+        items = [item(i, "wired", title=f"wired hardware review number {i}") for i in range(22)]
+        for feed in ("world1", "world2", "world3", "world4"):
+            items.extend(
+                item(i, feed, title=f"{feed} diplomatic report {i}") for i in range(10)
+            )
+
+        result = DigestEngine(config, self.now).process(items, "morning_digest", True)
+
+        self.assertIsNotNone(result)
+        counts = {stat["word"]: stat["count"] for stat in result.stats}
+        self.assertEqual(len(result.articles), 20)
+        self.assertGreaterEqual(
+            counts.get("科技与 AI", 0), 6,
+            "the reserved share must be honoured even when one feed owns the pool",
+        )
+        self.assertGreaterEqual(counts.get("全球事务", 0), 2)
+
+    def test_quota_pass_is_exact_so_early_sections_cannot_eat_later_seats(self):
+        """A section must not overshoot its quota before later sections are served.
+
+        Production symptom this pins: 全球事务 (quota 2) took 6 seats from the
+        borrowing pass while 中国、经济与国际关系 (quota 3) was still waiting,
+        and the total filled up before that section was ever reached.
+        """
+        config = dict(
+            self.config,
+            DEDUP_SIMILARITY=1.0,
+            CATEGORIES=[
+                {"ID": "world", "NAME": "全球事务", "QUOTA": 2, "WEIGHT": 1.0,
+                 "FEEDS": ["world1", "world2"], "KEYWORDS": []},
+                {"ID": "china", "NAME": "中国、经济与国际关系", "QUOTA": 3, "WEIGHT": 1.0,
+                 "FEEDS": ["cn1", "cn2"], "KEYWORDS": []},
+                {"ID": "tech", "NAME": "科技与 AI", "QUOTA": 6, "WEIGHT": 1.6,
+                 "FEEDS": ["wired"], "KEYWORDS": []},
+            ],
+        )
+        items = []
+        for feed in ("world1", "world2"):
+            items.extend(item(i, feed, title=f"{feed} report {i}") for i in range(10))
+        for feed in ("cn1", "cn2"):
+            items.extend(item(i, feed, title=f"{feed} economy report {i}") for i in range(10))
+        items.extend(item(i, "wired", title=f"wired review {i}") for i in range(22))
+
+        result = DigestEngine(config, self.now).process(items, "morning_digest", True)
+
+        counts = {stat["word"]: stat["count"] for stat in result.stats}
+        self.assertEqual(len(result.articles), 20)
+        # 全球事务 is listed first and has the largest pool, yet must stop at 2
+        # so the sections behind it still get their seats.
+        self.assertEqual(counts.get("全球事务", 0), 2)
+        self.assertGreaterEqual(counts.get("中国、经济与国际关系", 0), 3)
+        self.assertGreaterEqual(counts.get("科技与 AI", 0), 6)
+
+    def test_section_without_candidates_does_not_block_other_sections(self):
+        config = dict(
+            self.config,
+            DEDUP_SIMILARITY=1.0,
+            CATEGORIES=[
+                {"ID": "tech", "NAME": "科技与 AI", "QUOTA": 6, "WEIGHT": 1.6,
+                 "FEEDS": ["absent"], "KEYWORDS": []},
+                {"ID": "world", "NAME": "全球事务", "QUOTA": 2, "WEIGHT": 1.0,
+                 "FEEDS": ["world1", "world2"], "KEYWORDS": []},
+            ],
+        )
+        items = []
+        for feed in ("world1", "world2"):
+            items.extend(item(i, feed, title=f"{feed} report {i}") for i in range(15))
+
+        result = DigestEngine(config, self.now).process(items, "morning_digest", True)
+
+        self.assertIsNotNone(result)
+        # The empty section simply yields nothing; the briefing still fills up
+        # through the borrowing passes.
+        counts = {stat["word"]: stat["count"] for stat in result.stats}
+        self.assertEqual(len(result.articles), 20)
+        self.assertEqual(counts.get("科技与 AI", 0), 0)
+        self.assertEqual(counts.get("全球事务", 0), 20)
+
+    def test_source_diversity_still_holds_within_each_quota(self):
+        """The cap stays effective whenever a section can fill its quota without bending it."""
+        config = dict(
+            self.config,
+            DEDUP_SIMILARITY=1.0,
+            MAX_ITEMS=6,
+            CATEGORIES=[
+                {"ID": "tech", "NAME": "科技与 AI", "QUOTA": 6, "WEIGHT": 1.6,
+                 "FEEDS": ["tech1", "tech2", "tech3", "tech4"], "KEYWORDS": []},
+            ],
+        )
+        items = []
+        for feed in ("tech1", "tech2", "tech3", "tech4"):
+            items.extend(item(i, feed, title=f"{feed} story {i}") for i in range(5))
+
+        result = DigestEngine(config, self.now).process(items, "morning_digest", True)
+
+        self.assertEqual(len(result.articles), 6)
+        per_feed = Counter(article["feed_id"] for article in result.articles)
+        self.assertLessEqual(
+            max(per_feed.values()), config["SOURCE_LIMIT"],
+            "with enough feeds available the per-source cap must still apply",
+        )
+
+    def test_many_updated_stories_cannot_starve_the_section_quotas(self):
+        """The sticky 'updated' marker must not make the configured sections unreachable.
+
+        Production symptom this pins: a slot-time pool held 25 updated stories,
+        the pre-quota pass seated all 20, and every section quota went unread.
+        The cap does not forbid updated stories from filling the briefing -- it
+        only guarantees the quota pass still gets a turn.
+        """
+        config = dict(
+            self.config,
+            DEDUP_SIMILARITY=1.0,
+            CATEGORIES=[
+                {"ID": "tech", "NAME": "科技与 AI", "QUOTA": 6, "WEIGHT": 1.6,
+                 "FEEDS": ["wired"], "KEYWORDS": []},
+                {"ID": "world", "NAME": "全球事务", "QUOTA": 4, "WEIGHT": 1.0,
+                 "FEEDS": ["world1", "world2"], "KEYWORDS": []},
+            ],
+        )
+        pool = [item(i, "wired", title=f"wired review {i}") for i in range(22)]
+        pool += [item(i, "world1", title=f"world report {i}") for i in range(10)]
+        pool += [item(i, "world2", title=f"world briefing {i}") for i in range(10)]
+
+        seed = DigestEngine(config, self.now)
+        seed.process(pool, None, False)
+        # Mark every candidate as materially updated, mimicking a pool where most
+        # stories changed since the previous briefing.
+        for record in seed.state["articles"].values():
+            record["status"] = "updated"
+            record["update_detected_at"] = self.now.isoformat()
+        seed._save_state()
+
+        engine = DigestEngine(config, self.now + timedelta(hours=1))
+        engine.state = seed.state
+        selection = engine._select(list(engine.state["articles"].values()))
+
+        self.assertEqual(len(selection), 20)
+        counts = Counter(record.get("category_id") for record in selection)
+        self.assertGreaterEqual(
+            counts["tech"], 6,
+            "the reserved share must survive a pool dominated by updated stories",
+        )
+        self.assertGreaterEqual(counts["world"], 4)
+
+    def test_breaking_news_is_never_capped(self):
+        pool = [
+            item(i, "world1", title=f"Breaking: quake bulletin {i}")
+            for i in range(12)
+        ]
+        engine = DigestEngine(dict(self.config, DEDUP_SIMILARITY=1.0), self.now)
+        engine.process(pool, None, False)
+        selection = engine._select(list(engine.state["articles"].values()))
+
+        breaking = [r for r in selection if r.get("breaking")]
+        self.assertGreater(len(breaking), 10)
 
     def test_deduplicates_tracking_urls_titles_and_near_copies(self):
         base = item(1, "tech1", title="A major artificial intelligence system launches today",

@@ -656,6 +656,11 @@ class DigestEngine:
         selected: List[Dict[str, Any]] = []
         selected_ids: set[str] = set()
         source_counts: Counter[str] = Counter()
+        # Sources that already spent their per-source allowance inside a
+        # category's reserved share.  The unrelaxed passes below must still see
+        # them as exhausted, otherwise relaxing a quota would silently let even
+        # more items through later.
+        relaxed_sources: set[str] = set()
 
         def add(record: Dict[str, Any], enforce_source_limit: bool = True) -> bool:
             if record["id"] in selected_ids:
@@ -668,29 +673,86 @@ class DigestEngine:
             source_counts[source] += 1
             return True
 
-        # Breaking news and material updates are always considered before quotas.
+        # Breaking news and material updates are preferred, but the "updated"
+        # marker is sticky: once a story's content changes it keeps that status,
+        # so a slot-time pool can easily hold more updated stories than the whole
+        # briefing.  Two bounds keep the configured sections reachable:
+        #   * non-breaking updates may take at most half the briefing;
+        #   * no section may take more than its own quota here, because the
+        #     quota pass below counts these seats and would then skip the
+        #     section entirely while starving the ones behind it.
+        # Breaking news is never bounded by either rule.
+        update_seats = max(0, self.max_items // 2)
+        used_update_seats = 0
+        quota_by_category: Dict[Any, int] = {
+            category.get("ID"): max(0, int(category.get("QUOTA", 0)))
+            for category in self.categories
+        }
+        used_seats: Counter[str] = Counter()
         for record in ranked:
-            if record.get("breaking") or record.get("status") == "updated":
-                add(record)
-                if len(selected) >= self.max_items:
-                    return selected
+            is_breaking = bool(record.get("breaking"))
+            is_updated = record.get("status") == "updated"
+            if not is_breaking and not is_updated:
+                continue
+            category_id = record.get("category_id", "other")
+            if not is_breaking:
+                if used_update_seats >= update_seats:
+                    continue
+                quota = quota_by_category.get(category_id, 0)
+                if quota and used_seats[category_id] >= quota:
+                    continue
+            if add(record):
+                used_seats[category_id] += 1
+                if not is_breaking:
+                    used_update_seats += 1
+            if len(selected) >= self.max_items:
+                return selected
 
-        # Fill each configured section's reserved share.
+        # Fill each configured section's reserved share.  Quotas are totals, not
+        # increments: a section that overshoots eats the seats of every section
+        # after it, so borrowing is deferred to the passes below.  The per-source
+        # cap is a diversity target, not an absolute: when a section's whole
+        # candidate pool comes from one prolific feed (for example WIRED under
+        # 科技与 AI), honouring the cap strictly starves the section to zero and
+        # the quota it was meant to guarantee never materialises.
         for category in self.categories:
+            category_id = category.get("ID")
             quota = max(0, int(category.get("QUOTA", 0)))
-            current = sum(1 for item in selected if item.get("category_id") == category.get("ID"))
-            for record in by_category.get(category.get("ID", ""), []):
+            if quota <= 0:
+                continue
+            current = sum(1 for item in selected if item.get("category_id") == category_id)
+            if current >= quota:
+                continue
+
+            pool = list(by_category.get(category_id, []))
+            # Best items first, but keep the cap's spirit while it is still
+            # possible to satisfy the quota without bending it.
+            for record in pool:
                 if current >= quota or len(selected) >= self.max_items:
                     break
                 if add(record):
                     current += 1
 
+            if current < quota and len(selected) < self.max_items:
+                for record in pool:
+                    if current >= quota or len(selected) >= self.max_items:
+                        break
+                    if record["id"] in selected_ids:
+                        continue
+                    source = record.get("feed_id") or record.get("feed_name") or "RSS"
+                    if add(record, enforce_source_limit=False):
+                        current += 1
+                        relaxed_sources.add(source)
+
         # Borrow unused quota globally, retaining source diversity.
         for record in ranked:
             if len(selected) >= self.max_items:
                 break
-            add(record)
-        # If the source limit alone prevents reaching 20, relax it as a last resort.
+            source = record.get("feed_id") or record.get("feed_name") or "RSS"
+            add(record, enforce_source_limit=source not in relaxed_sources)
+
+        # If the source limit alone prevents reaching the target length, relax it
+        # as a last resort: a short briefing is worse than a repetitive one.
         for record in ranked:
             if len(selected) >= self.max_items:
                 break
