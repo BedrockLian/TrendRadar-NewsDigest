@@ -130,6 +130,7 @@ class DigestEngine:
         config: Dict[str, Any],
         now: datetime,
         ai_config: Optional[Dict[str, Any]] = None,
+        translator: Optional[Any] = None,
     ) -> None:
         self.config = config or {}
         self.now = now
@@ -144,7 +145,16 @@ class DigestEngine:
         self.categories = self.config.get("CATEGORIES", [])
         self.breaking = self.config.get("BREAKING", {})
         self.weekly = self.config.get("WEEKLY", {})
+        # Optional AITranslator.  Without one the workspace simply keeps the
+        # original feed text, so this stays a pure opt-in enrichment.
+        self.translator = translator
         self.state = self._load_state()
+        # Rolling cache of translated titles/summaries keyed by content hash.
+        # It is intentionally NOT part of .state.json: losing it costs money,
+        # but losing state would cost correctness, and they have very different
+        # lifetimes.
+        self.translation_cache_path = self.archive_dir / ".translations.json"
+        self.translation_cache = self._load_translation_cache()
 
     def process(
         self,
@@ -157,6 +167,15 @@ class DigestEngine:
             return None
 
         self._observe(items or [])
+
+        # Enrich the articles a reader can actually reach *before* projecting
+        # them, so the briefing, the update rail and the full-news list all read
+        # in the target language.  This runs on every crawl (not only at a
+        # briefing slot) so the whole workspace converges, but every story is
+        # translated exactly once thanks to the content-hash cache.
+        if self.translator and getattr(self.translator, "enabled", False):
+            self._translate_articles(list(self.state.get("articles", {}).values()))
+
         result: Optional[DigestResult] = None
         slot_keys = set(self.config.get("SLOT_KEYS", []))
         if scheduled_push and period_key and (not slot_keys or period_key in slot_keys):
@@ -166,6 +185,7 @@ class DigestEngine:
             result = self._prepare_alert()
 
         self._prune()
+        self._prune_translation_cache()
         self._save_state()
         return result
 
@@ -301,9 +321,9 @@ class DigestEngine:
                 sources.add(source_name)
                 titles.append(
                     {
-                        "title": str(item.get("title") or ""),
+                        "title": self._localized(item, "title"),
                         "url": safe_http_url(str(item.get("url") or "")),
-                        "summary": str(item.get("summary") or ""),
+                        "summary": self._localized(item, "summary"),
                         "source_name": source_name,
                         "published_at": str(item.get("time_display") or ""),
                         "status": str(item.get("digest_status") or ""),
@@ -373,12 +393,15 @@ class DigestEngine:
             record = by_url.get(url_key) or by_title.get(title_key)
             if record:
                 category = self._category_for(raw)
+                # Prefer the translated text; the lookup above stays keyed on the
+                # original title because that is what the feed still sends.
                 public.append(
                     {
-                        "title": title,
+                        "title": self._localized(record, "title") or title,
                         "url": url,
                         "summary": clean_summary(
-                            str(raw.get("summary") or record.get("summary") or title),
+                            self._localized(record, "summary")
+                            or str(raw.get("summary") or record.get("summary") or title),
                             self.summary_max_chars,
                         ),
                         "source_name": str(
@@ -455,6 +478,157 @@ class DigestEngine:
             json.dumps(self.state, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         os.replace(temp_path, self.state_path)
+
+    # === 翻译 ===
+
+    def _load_translation_cache(self) -> Dict[str, Any]:
+        if not self.translation_cache_path.is_file():
+            return {"version": 1, "entries": {}}
+        try:
+            data = json.loads(self.translation_cache_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                data.setdefault("version", 1)
+                data.setdefault("entries", {})
+                return data
+        except (OSError, ValueError):
+            pass
+        return {"version": 1, "entries": {}}
+
+    def _save_translation_cache(self) -> None:
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
+        temp_path = self.translation_cache_path.with_suffix(".tmp")
+        temp_path.write_text(
+            json.dumps(self.translation_cache, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.replace(temp_path, self.translation_cache_path)
+
+    @staticmethod
+    def _needs_translation(text: str) -> bool:
+        """True when the text carries no CJK, i.e. it is not already Chinese."""
+
+        return bool(text) and not any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+    def _localized(self, record: Dict[str, Any], field: str) -> str:
+        """Translated text when available, otherwise the original field.
+
+        Translations resolve through the content-hash cache rather than being
+        written onto the record, so the state ledger never grows a second copy
+        of every article and existing state files keep working unchanged.
+        """
+
+        key = str(record.get("content_hash") or "")
+        if key:
+            entry = self.translation_cache["entries"].get(key)
+            if isinstance(entry, dict):
+                translated = entry.get(f"{field}_zh")
+                if translated:
+                    return str(translated)
+        return str(record.get(field) or "")
+
+    def _translate_articles(self, records: List[Dict[str, Any]]) -> int:
+        """Translate titles and summaries for the given records, with caching.
+
+        Cached by ``content_hash``, which is derived from title + summary +
+        published_at, so a story is translated once and reused across every
+        later crawl and briefing.  Returns how many records hit the network.
+        """
+
+        if not self.translator or not getattr(self.translator, "enabled", False):
+            return 0
+        if not records:
+            return 0
+
+        settings = self.config.get("TRANSLATION", {}) or {}
+        batch_size = max(1, int(settings.get("BATCH_SIZE", 40)))
+        # Hard ceiling per run so a large backfill can never produce a surprise
+        # API bill; the cache catches up over the following runs.
+        max_new = max(0, int(settings.get("MAX_NEW_PER_RUN", 120)))
+
+        entries = self.translation_cache["entries"]
+        pending: List[Dict[str, Any]] = []
+        for record in records:
+            key = str(record.get("content_hash") or "")
+            if not key:
+                continue
+            if isinstance(entries.get(key), dict):
+                continue
+            if not self._needs_translation(str(record.get("title") or "")) and not (
+                self._needs_translation(str(record.get("summary") or ""))
+            ):
+                # Already Chinese: record the decision so the record is not
+                # re-examined on every later crawl.
+                entries[key] = {
+                    "title_zh": str(record.get("title") or ""),
+                    "summary_zh": str(record.get("summary") or ""),
+                    "at": self.now.isoformat(),
+                }
+                continue
+            if len(pending) >= max_new:
+                continue
+            pending.append(record)
+
+        translated_count = 0
+        for offset in range(0, len(pending), batch_size):
+            batch = pending[offset : offset + batch_size]
+            texts: List[str] = []
+            for record in batch:
+                texts.append(str(record.get("title") or ""))
+                texts.append(str(record.get("summary") or ""))
+
+            try:
+                result = self.translator.translate_batch(texts)
+            except Exception as exc:  # noqa: BLE001 - enrichment must never break a run
+                print(f"[简报] 翻译失败，保留原文: {type(exc).__name__}: {str(exc)[:120]}")
+                break
+
+            if not getattr(result, "results", None):
+                print("[简报] 翻译未返回结果，保留原文")
+                break
+
+            if len(result.results) < len(batch) * 2:
+                print("[简报] 翻译结果数量不足，保留原文")
+                break
+
+            for index, record in enumerate(batch):
+                title_result = result.results[index * 2]
+                summary_result = result.results[index * 2 + 1]
+                title_zh = (title_result.translated_text or "").strip()
+                summary_zh = (summary_result.translated_text or "").strip()
+                # The parser falls back to the original text on failure, so only
+                # accept a translation that actually changed the language.
+                if title_zh and self._needs_translation(title_zh):
+                    title_zh = ""
+                if summary_zh and self._needs_translation(summary_zh):
+                    summary_zh = ""
+                key = str(record.get("content_hash") or "")
+                if not key:
+                    continue
+                entries[key] = {
+                    "title_zh": title_zh,
+                    "summary_zh": summary_zh,
+                    "at": self.now.isoformat(),
+                }
+                translated_count += 1
+
+        if translated_count:
+            self._save_translation_cache()
+        return translated_count
+
+    def _prune_translation_cache(self) -> None:
+        """Drop cache entries that no tracked article references any more."""
+
+        live = {
+            str(record.get("content_hash") or "")
+            for record in self.state.get("articles", {}).values()
+        }
+        live.discard("")
+        entries = self.translation_cache["entries"]
+        stale = [key for key in entries if key not in live]
+        for key in stale:
+            del entries[key]
+        if stale:
+            self._save_translation_cache()
 
     def _article_id(self, item: Dict[str, Any]) -> str:
         guid = str(item.get("guid") or "").strip()
@@ -947,7 +1121,7 @@ class DigestEngine:
             for rank, record in enumerate(group, 1):
                 label = "突发" if record.get("breaking") else "更新" if record.get("status") == "updated" else ""
                 titles.append({
-                    "title": record["title"],
+                    "title": self._localized(record, "title"),
                     "source_name": record.get("feed_name", "RSS"),
                     "time_display": record.get("published_at", ""),
                     "count": 1,
@@ -956,7 +1130,7 @@ class DigestEngine:
                     "url": record["url"],
                     "mobile_url": "",
                     "is_new": record.get("status") == "new",
-                    "summary": record.get("summary", ""),
+                    "summary": self._localized(record, "summary"),
                     "digest_status": label,
                     "_id": record["id"],
                 })

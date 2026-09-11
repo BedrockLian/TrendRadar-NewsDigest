@@ -1435,6 +1435,9 @@ class NewsAnalyzer:
                 digest_config,
                 now=self.ctx.get_time(),
                 ai_config=self.ctx.config.get("AI", {}),
+                # Localises the workspace itself (briefing, update rail, and the
+                # full-news list), not just outbound notifications.
+                translator=self.ctx.create_translator(),
             )
             self._digest_result = self._digest_engine.process(
                 raw_rss_items or [],

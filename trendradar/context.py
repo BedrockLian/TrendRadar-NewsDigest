@@ -469,6 +469,20 @@ class AppContext:
 
     # === 通知发送 ===
 
+    def create_translator(self) -> Optional[AITranslator]:
+        """创建翻译器（仅在启用且配置了 AI Key 时）
+
+        The briefing engine uses this to localise the workspace itself, not just
+        outbound notifications.
+        """
+        trans_config = self.config.get("AI_TRANSLATION", {})
+        if not trans_config.get("ENABLED", False):
+            return None
+        translator = AITranslator(trans_config, self.config.get("AI", {}))
+        if not translator.client.api_key:
+            return None
+        return translator
+
     def create_notification_dispatcher(self) -> NotificationDispatcher:
         """创建通知调度器"""
         # 创建翻译器（如果启用）
