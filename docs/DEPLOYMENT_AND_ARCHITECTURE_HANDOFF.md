@@ -195,11 +195,16 @@ systemd timer / Docker supercronic / 手动命令
  deployment.publish_static（发布锁）
                      │
                      ▼
-    public/index.html + public/briefings/**
+    public/index.html + public/briefings/** + *.gz
                      │
                      ▼
-          Nginx / Python http.server
+     deployment.serve_public（trendradar-web.service）
+                     │
+                     ▼
+          Nginx 反代 127.0.0.1:18080
 ```
+
+Docker 部署另有其路径：`http.server` 在容器内提供 `/app/public`（见 §7.3）。
 
 ### 4.2 关键代码
 
