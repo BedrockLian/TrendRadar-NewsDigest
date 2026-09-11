@@ -174,6 +174,8 @@ class DigestEngine:
         # Hash -> ISO timestamp for records the provider has refused.  Without
         # this the split retries every rejected story on every run forever.
         self._translation_refused_keys = set(self.translation_cache["refused"])
+        # Per-pass API call budget, reset at the start of each translate pass.
+        self._translation_calls_left = 0
 
     def process(
         self,
@@ -579,6 +581,10 @@ class DigestEngine:
         refused record can be remembered and never paid for again.
         """
 
+        if self._translation_calls_left <= 0:
+            return None
+        self._translation_calls_left -= 1
+
         try:
             result = self.translator.translate_batch(texts)
         except Exception as exc:  # noqa: BLE001 - enrichment must never break a run
@@ -613,6 +619,9 @@ class DigestEngine:
         if not failed:
             return translated
 
+        # Budget guard: splitting a broadly-filtered pool would otherwise fan out
+        # into hundreds of calls and hold the run past its systemd timeout.
+        # Deferred records are simply retried on the next run.
         # Split the batch to isolate the offending item instead of losing every
         # text in it.
         if len(texts) <= 2:
@@ -671,6 +680,12 @@ class DigestEngine:
         # backlog can never produce a surprise API bill; the cache catches up
         # over the following runs.  ``None`` means unbounded.
         ceiling = None if ignore_ceiling else max(0, int(settings.get("MAX_NEW_PER_RUN", 120)))
+        # Total API calls this pass may make, including split retries.  Generous
+        # enough for normal batches (one call each) plus isolating a few refused
+        # stories, but bounded so a broadly-filtered pool cannot hold the run.
+        budget = (len(records) // batch_size) + 1
+        retry_budget = max(4, min(4 * batch_size, int(settings.get("MAX_RETRY_CALLS", 48))))
+        self._translation_calls_left = budget + retry_budget
 
         entries = self.translation_cache["entries"]
         pending: List[Dict[str, Any]] = []

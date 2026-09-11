@@ -404,6 +404,31 @@ class TranslationTest(unittest.TestCase):
 
         self.assertEqual(engine.translation_cache["refused"], {})
 
+    def test_split_retries_are_bounded_per_pass(self):
+        """A broadly filtered pool must not fan out into unbounded calls.
+
+        Production symptom: a run sat in 'translating' for over ten minutes
+        because every refused batch was recursively halved.
+        """
+        class AlwaysRefusing(StubTranslator):
+            def translate_batch(self, texts):
+                self.calls.append(list(texts))
+                batch = StubBatch([StubTranslation(t) for t in texts])
+                batch.parsed_count = 0
+                return batch
+
+        translator = AlwaysRefusing()
+        config = dict(self.config, TRANSLATION={"BATCH_SIZE": 8, "MAX_NEW_PER_RUN": 50})
+        engine = DigestEngine(config, self.now, translator=translator)
+        engine.process(self.make_items(16), None, False)
+
+        # 16 records -> 2 batches of 8, plus a bounded retry allowance.
+        self.assertLessEqual(
+            len(translator.calls), 8 + 50,
+            "the per-pass call budget must cap the fan-out",
+        )
+        self.assertEqual(engine.translation_cache["entries"], {})
+
     def test_backfill_does_not_stall_on_a_pool_larger_than_the_ceiling(self):
         """A bounded pass must skip what it deferred, or it never progresses.
 
