@@ -254,6 +254,40 @@ class TranslationTest(unittest.TestCase):
         for article in snapshot.all_news:
             self.assertTrue(article["title"].startswith("【译】"), article["title"])
 
+    def test_concurrent_engines_do_not_clobber_each_others_translations(self):
+        """Two engines share one cache file; neither may drop the other's work.
+
+        The digest engine and the notification pipeline each build their own
+        DigestEngine, so a naive save overwrites the other's entries and the
+        stories are paid for again on the next run.
+        """
+        items = self.make_items(4)
+
+        first = StubTranslator()
+        engine_a = DigestEngine(self.config, self.now, translator=first)
+        engine_a.process(items[:2], None, False)
+
+        second = StubTranslator()
+        engine_b = DigestEngine(self.config, self.now, translator=second)
+        engine_b.process(items[2:], None, False)
+
+        merged = DigestEngine(self.config, self.now)._load_translation_cache()["entries"]
+        self.assertEqual(
+            len(merged), 4,
+            "an entry written by the first engine disappeared",
+        )
+
+    def test_one_engine_does_not_retranslate_within_a_run(self):
+        """The engine translates several times per run; it must pay once."""
+        translator = StubTranslator()
+        items = self.make_items(3)
+        engine = DigestEngine(self.config, self.now, translator=translator)
+        engine.process(items, "morning_digest", True)
+
+        title_summary_texts = sum(len(call) for call in translator.calls)
+        # 3 records x (title + summary) once, and nothing on the later passes.
+        self.assertEqual(title_summary_texts, 6)
+
     def test_already_translated_content_is_used_by_the_digest_too(self):
         translator = StubTranslator()
         engine = DigestEngine(self.config, self.now, translator=translator)

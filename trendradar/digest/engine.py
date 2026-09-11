@@ -155,6 +155,14 @@ class DigestEngine:
         # lifetimes.
         self.translation_cache_path = self.archive_dir / ".translations.json"
         self.translation_cache = self._load_translation_cache()
+        # Records this engine instance has already paid to translate.  The
+        # engine translates more than once per run (before the digest, then for
+        # the digest's own selection, then again by the notification pipeline),
+        # and each of those passes would otherwise re-queue the same stories.
+        self._translation_attempted: set = set()
+        # Keys this instance deliberately dropped.  The merge in
+        # ``_save_translation_cache`` must not resurrect them from disk.
+        self._translation_removed: set = set()
 
     def process(
         self,
@@ -497,6 +505,14 @@ class DigestEngine:
 
     def _save_translation_cache(self) -> None:
         self.archive_dir.mkdir(parents=True, exist_ok=True)
+        # Another DigestEngine (the notification pipeline creates its own) may
+        # have written translations since this instance loaded the file.  Merge
+        # rather than overwrite, or the two passes trade their work back and
+        # forth and whichever saves last wins by accident.
+        for key, value in self._load_translation_cache()["entries"].items():
+            if key in self._translation_removed:
+                continue
+            self.translation_cache["entries"].setdefault(key, value)
         temp_path = self.translation_cache_path.with_suffix(".tmp")
         temp_path.write_text(
             json.dumps(self.translation_cache, ensure_ascii=False),
@@ -562,7 +578,7 @@ class DigestEngine:
             key = str(record.get("content_hash") or "")
             if not key:
                 continue
-            if isinstance(entries.get(key), dict):
+            if isinstance(entries.get(key), dict) or key in self._translation_attempted:
                 continue
             if not self._needs_translation(str(record.get("title") or "")) and not (
                 self._needs_translation(str(record.get("summary") or ""))
@@ -582,6 +598,12 @@ class DigestEngine:
         translated_count = 0
         for offset in range(0, len(pending), batch_size):
             batch = pending[offset : offset + batch_size]
+            # Mark before the call so a second pass in this same run never
+            # re-queues these, even if the call fails.
+            for record in batch:
+                key = str(record.get("content_hash") or "")
+                if key:
+                    self._translation_attempted.add(key)
             texts: List[str] = []
             for record in batch:
                 texts.append(str(record.get("title") or ""))
@@ -644,6 +666,7 @@ class DigestEngine:
         stale = [key for key in entries if key not in live]
         for key in stale:
             del entries[key]
+            self._translation_removed.add(key)
         if stale:
             self._save_translation_cache()
 
