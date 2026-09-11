@@ -258,10 +258,31 @@ Docker 部署另有其路径：`http.server` 在容器内提供 `/app/public`（
 | --- | ---: | --- |
 | `batch_size` | 40 | 每次请求提交的记录数（标题 + 摘要 = 2 倍文本条数） |
 | `max_new_per_run` | 40 | 单轮最多为多少条新记录付费 |
-| `max_retry_calls` | 8 | 被内容风控拒绝后允许的切分/重试调用次数 |
+| `max_retry_calls` | 8 | 被内容风控拒绝后允许的额外重试与切分调用次数 |
+| `refusal_retry_hours` | 6 | 被拒条目多少小时后重新尝试 |
 
-环境变量 `TRANSLATION_BATCH_SIZE` / `TRANSLATION_MAX_NEW_PER_RUN` / `TRANSLATION_MAX_RETRY_CALLS`
-优先于文件值。这三个值经 `_load_digest_config()` 进入引擎的 `TRANSLATION` 段。
+环境变量 `TRANSLATION_BATCH_SIZE` / `TRANSLATION_MAX_NEW_PER_RUN` /
+`TRANSLATION_MAX_RETRY_CALLS` / `TRANSLATION_REFUSAL_RETRY_HOURS`
+优先于文件值。这些值经 `_load_digest_config()` 进入引擎的 `TRANSLATION` 段。
+
+**拒绝要先重试、不要立刻切分。** 生产实测：供应商对同一批内容的拒绝是**偶发**的——
+20 条文本被拒后 2 秒，包含同样内容的 40 条文本请求就翻译成功了。所以 `_translate_texts()`
+先原样重发一次，只有仍被拒才二分切分去隔离"有毒"条目。此前一被拒就切分，把整份额度
+（10 次调用、2 分 20 秒）花在隔离一个根本不是问题源的条目上。
+
+**拒绝是延期，不是判决。** `.translations.json` 的 `refused` 记录拒绝时间戳，
+`_refusal_is_fresh()` 只在窗口内（默认 6 小时）跳过；过期即重试，翻译成功后清除该记录。
+否则一次偶发拒绝会让那条新闻永远停在英文。
+
+**AI 简介同样有额度上限。** `_ai_summaries_for()` 的切分也是递归的，由
+`digest.ai_summaries.max_calls`（默认 8，环境变量 `AI_SUMMARIES_MAX_CALLS`）限制单次简报的
+调用总数；额度用尽时剩余条目保留规则摘要，不会拖住整轮。
+
+每轮回填会打印一行汇总，便于直接看到节奏（此前这一步在日志里是完全静默的）：
+
+```text
+[简报] 翻译回填: 40/40 条入库, 1 次调用, 9.5s
+```
 
 **单轮内的 API 调用预算是按「本轮实际排队的记录数」算的，不是按整池。** 每轮采集会把整份
 约 2300 条的在册文章交给引擎，若按池算就会授权约 100 次调用。旧实现正是这样：一次被风控
@@ -689,12 +710,13 @@ Docker CLI 在当前 Windows 开发机不可用，因此本地没有执行完整
 
 ### 采集每轮跑 10 分钟以上
 
-1. 看服务日志里「[调度] 行为: 采集」到下一行之间的空档——那一整段就是本轮的翻译回填，
-   引擎在这一步不打日志；
+1. 直接看 `[简报] 翻译回填: N/M 条入库, K 次调用, X.Xs` 这一行，它给出本轮实际调用次数与耗时
+   （2026-09-11 之前没有这一行，那一步在日志里完全静默）；
 2. 用 `systemctl show trendradar-collect.service -p ExecMainStartTimestamp` 与日志里的
-   Starting/Deactivated 相减得到真实耗时；
-3. 核对 `digest.translation` 与 `TRANSLATION_*` 环境变量是否被改大（详见 4.4）；
-4. 看 `output/briefings/.translations.json` 的 `entries` 是否在增长：不增长说明请求都被拒了；
+   Starting/Deactivated 相减得到整轮真实耗时；
+3. 若「次调用」明显大于 1：核对 `digest.translation` 与 `TRANSLATION_*` 是否被改大（详见 4.4）；
+4. 看 `output/briefings/.translations.json` 的 `entries` 是否在增长：不增长说明请求都被拒了，
+   再看 `refused` 里被拒条目的时间戳；
 5. 不要在生产里加插桩再跑——在 `/tmp` 用 `/opt/trendradar/.venv/bin/python` 单独调用
    `AITranslator.translate_batch` 测批次耗时与成败（`ops/probe_batch.py` 就是这个用途）。
 

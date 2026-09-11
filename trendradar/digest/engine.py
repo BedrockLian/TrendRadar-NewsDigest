@@ -14,6 +14,7 @@ import html
 import json
 import os
 import re
+import time
 import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -155,7 +156,6 @@ class DigestEngine:
         # lifetimes.
         self.translation_cache_path = self.archive_dir / ".translations.json"
         self.translation_cache = self._load_translation_cache()
-        self._translation_refused_keys = set(self.translation_cache["refused"])
         # Records this engine instance has already paid to translate.  The
         # engine translates more than once per run (before the digest, then for
         # the digest's own selection, then again by the notification pipeline),
@@ -171,11 +171,10 @@ class DigestEngine:
         # Records the provider filtered during THIS run.  Splitting must not
         # re-queue them through a different pass in the same process.
         self._translation_refused: set = set()
-        # Hash -> ISO timestamp for records the provider has refused.  Without
-        # this the split retries every rejected story on every run forever.
-        self._translation_refused_keys = set(self.translation_cache["refused"])
-        # Per-pass API call budget, reset at the start of each translate pass.
+        # Per-pass API call budget, reset at the start of each translate pass,
+        # plus the AI-summary allowance for the current run.
         self._translation_calls_left = 0
+        self._ai_summary_calls_left = 0
 
     def process(
         self,
@@ -529,12 +528,14 @@ class DigestEngine:
                 continue
             self.translation_cache["entries"].setdefault(key, value)
         # Persist refusals so a filtered story is not re-split on every run.
-        # Keys this instance pruned stay pruned.
+        # The stamp is refreshed on each refusal, and ``_refusal_is_fresh``
+        # retries the story once the window passes.  Keys this instance pruned
+        # stay pruned.
         refused = self.translation_cache.setdefault("refused", {})
         for key in self._translation_refused:
             if key in self._translation_removed:
                 continue
-            refused.setdefault(key, self.now.isoformat())
+            refused[key] = self.now.isoformat()
         # The temp file must sit beside its target: ``os.replace`` is only
         # atomic within one filesystem, and a cross-device move raises here,
         # which would abort the rest of the run.
@@ -568,17 +569,23 @@ class DigestEngine:
                     return str(translated)
         return str(record.get(field) or "")
 
-    def _translate_texts(self, texts: List[str], keys: Optional[List[str]] = None) -> Optional[List[str]]:
-        """Translate ``texts``, splitting the batch when the provider refuses it.
+    def _translate_texts(
+        self,
+        texts: List[str],
+        keys: Optional[List[str]] = None,
+        *,
+        allow_retry: bool = True,
+    ) -> Optional[List[str]]:
+        """Translate ``texts``, retrying once and then splitting a refusal.
 
-        A single rejected item poisons the whole request: the provider answers
-        with a batch-level error and the parser falls back to echoing every
-        input, so nothing gets translated and the caller correctly discards the
-        lot.  Retrying as two halves isolates the offending item instead of
-        losing the other hundreds of texts with it.
+        The provider refuses news content intermittently -- the same batch is
+        accepted seconds later -- so one unchanged retry goes first; that is what
+        recovers a transient rejection cheaply.  A refusal that survives the
+        retry looks like a single rejected item poisoning the whole request, and
+        the batch is halved to isolate it instead of losing every text in it.
 
         ``keys`` carries the content hash of the record behind every text so a
-        refused record can be remembered and never paid for again.
+        refused record can be remembered instead of paid for again in this run.
         """
 
         if self._translation_calls_left <= 0:
@@ -619,8 +626,15 @@ class DigestEngine:
         if not failed:
             return translated
 
-        # Budget guard: splitting a broadly-filtered pool would otherwise fan out
-        # into hundreds of calls and hold the run past its systemd timeout.
+        # Retry the request unchanged once: production refusals are transient
+        # (the same 80-text batch is accepted seconds later), so splitting it
+        # right away spent the whole retry allowance -- ten calls, 2m20s -- to
+        # isolate a story that was never the problem.
+        if allow_retry:
+            return self._translate_texts(texts, keys, allow_retry=False)
+
+        # Budget guard: splitting a broadly-filtered pool would otherwise fan
+        # out into hundreds of calls and hold the run past its systemd timeout.
         # Deferred records are simply retried on the next run.
         # Split the batch to isolate the offending item instead of losing every
         # text in it.
@@ -637,7 +651,6 @@ class DigestEngine:
                 for key in keys:
                     if key:
                         self._translation_refused.add(key)
-                        self._translation_refused_keys.add(key)
             return None
 
         middle = max(1, len(texts) // 2)
@@ -683,6 +696,10 @@ class DigestEngine:
         # Extra calls allowed on top of the queued batches, for splitting a
         # refused batch down to the offending story.
         retry_calls = max(2, int(settings.get("MAX_RETRY_CALLS", 8)))
+        # How long a recorded refusal is honoured before the story is retried.
+        self._translation_refusal_window = timedelta(
+            hours=max(1, int(settings.get("REFUSAL_RETRY_HOURS", 6)))
+        )
 
         entries = self.translation_cache["entries"]
         pending: List[Dict[str, Any]] = []
@@ -701,10 +718,11 @@ class DigestEngine:
                 continue
             if isinstance(entries.get(key), dict):
                 continue
-            # Already refused by the provider (in this run or a previous one).
-            # Retrying is pointless: the filter answer is deterministic, and the
-            # split would otherwise re-descend the same stories every run.
-            if key in self._translation_refused_keys or key in self._translation_refused:
+            # Refused during this run, or recently enough that another attempt
+            # would only buy the same answer.  Older refusals expire: the
+            # provider's filter is intermittent, and a permanent mark would
+            # leave those stories in English forever (see _refusal_is_fresh).
+            if key in self._translation_refused or self._refusal_is_fresh(key):
                 continue
             # The bounded backfill pass must not re-queue what an earlier
             # backfill pass deferred.  The unbounded pass (the briefing's own
@@ -734,6 +752,8 @@ class DigestEngine:
         # held the run for nine minutes against the 900 s systemd timeout.
         budget = (len(pending) + batch_size - 1) // batch_size + 1
         self._translation_calls_left = budget + max(2, min(4 * batch_size, retry_calls))
+        calls_available = self._translation_calls_left
+        started = time.perf_counter()
 
         translated_count = 0
         for offset in range(0, len(pending), batch_size):
@@ -774,11 +794,43 @@ class DigestEngine:
                     "summary_zh": summary_zh,
                     "at": self.now.isoformat(),
                 }
+                # A successful translation clears an earlier refusal record.
+                self.translation_cache["refused"].pop(key, None)
                 translated_count += 1
 
         if translated_count:
             self._save_translation_cache()
+        if pending:
+            # One line per pass.  This step used to be a silent gap of up to ten
+            # minutes in the service log, which is what kept the pacing bug
+            # invisible; keep the pass observable.
+            print(
+                f"[简报] 翻译回填: {translated_count}/{len(pending)} 条入库, "
+                f"{calls_available - self._translation_calls_left} 次调用, "
+                f"{time.perf_counter() - started:.1f}s"
+            )
         return translated_count
+
+    def _refusal_is_fresh(self, key: str) -> bool:
+        """True while a recorded refusal is recent enough to still be honoured.
+
+        The provider's filter is intermittent: a batch it rejects is routinely
+        accepted on the next call, so a refusal is a deferral rather than a
+        verdict.  Honouring it for a bounded window keeps a refused story from
+        being paid for on every run without leaving it in English forever.
+        """
+
+        stamp = self.translation_cache.get("refused", {}).get(key)
+        if not stamp:
+            return False
+        try:
+            refused_at = datetime.fromisoformat(str(stamp))
+        except ValueError:
+            return False
+        if refused_at.tzinfo is None:
+            refused_at = refused_at.replace(tzinfo=self.now.tzinfo)
+        window = getattr(self, "_translation_refusal_window", None) or timedelta(hours=6)
+        return self.now - refused_at < window
 
     def _prune_translation_cache(self) -> None:
         """Drop cache entries that no tracked article references any more."""
@@ -1181,15 +1233,21 @@ class DigestEngine:
         "不要补充素材中没有的事实。仅返回JSON数组，元素为id和summary。"
     )
 
-    def _ai_summaries_for(self, client: Any, batch: List[Dict[str, Any]]) -> Dict[str, str]:
-        """Ask for Chinese summaries for one batch, splitting if it is refused.
+    def _ai_summaries_for(
+        self, client: Any, batch: List[Dict[str, Any]], *, allow_retry: bool = True
+    ) -> Dict[str, str]:
+        """Ask for Chinese summaries for one batch, retrying once then splitting.
 
         The provider answers a request containing material its filter dislikes
-        with an empty body and a 400 rather than a per-item error.  Retrying as
-        two halves isolates the offending story so the rest of the briefing
-        still gets a written summary instead of falling back to the raw feed
-        text.
+        with an empty body and a 400 rather than a per-item error, and it does so
+        intermittently: the request is repeated once unchanged, and only a
+        refusal that survives the retry is split in two to isolate the offending
+        story.  Every attempt spends the run's call allowance.
         """
+
+        if self._ai_summary_calls_left <= 0:
+            return {}
+        self._ai_summary_calls_left -= 1
 
         payload = [
             {
@@ -1212,6 +1270,8 @@ class DigestEngine:
             if not self._ai_summary_error_logged:
                 print(f"[简报] AI 简介生成失败: {type(exc).__name__}: {str(exc)[:100]}")
                 self._ai_summary_error_logged = True
+            if allow_retry:
+                return self._ai_summaries_for(client, batch, allow_retry=False)
             return self._split_ai_summaries(client, batch)
 
         summaries: Dict[str, str] = {}
@@ -1232,6 +1292,8 @@ class DigestEngine:
 
         if summaries:
             return summaries
+        if allow_retry:
+            return self._ai_summaries_for(client, batch, allow_retry=False)
         return self._split_ai_summaries(client, batch)
 
     def _split_ai_summaries(
@@ -1253,6 +1315,11 @@ class DigestEngine:
             print("[简报] 未配置可用的 AI API Key，保留 RSS 简介")
             return
         batch_size = max(1, int(settings.get("BATCH_SIZE", 20)))
+        # Bound the whole run's summary calls: the split below is recursive, and
+        # an intermittently-refused provider would otherwise fan out on every
+        # briefing.  Exhausting the allowance leaves the remaining stories on
+        # their rule-based summary.
+        self._ai_summary_calls_left = max(2, int(settings.get("MAX_CALLS", 8)))
         for offset in range(0, len(records), batch_size):
             batch = records[offset : offset + batch_size]
             summaries = self._ai_summaries_for(client, batch)

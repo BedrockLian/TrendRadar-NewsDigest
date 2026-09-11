@@ -1,9 +1,10 @@
 """Tests for localising the workspace through the briefing engine."""
 
+import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -99,6 +100,27 @@ class EmptyResponseTranslator(StubTranslator):
         batch = StubBatch([StubTranslation(f"{self.prefix}{text}") for text in texts])
         batch.parsed_count = len(texts)
         return batch
+
+
+class RefuseOnceTranslator(StubTranslator):
+    """Refuses the first request, the way the production provider does.
+
+    The filter is intermittent: the identical batch is accepted on the retry,
+    which is why the engine repeats a refused request before splitting it.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.refusals = 0
+
+    def translate_batch(self, texts):
+        self.calls.append(list(texts))
+        if self.refusals == 0:
+            self.refusals = 1
+            batch = StubBatch([StubTranslation(text) for text in texts])
+            batch.parsed_count = 0          # nothing was parsed
+            return batch
+        return StubBatch([StubTranslation(f"{self.prefix}{text}") for text in texts])
 
 
 class TranslationTest(unittest.TestCase):
@@ -370,8 +392,57 @@ class TranslationTest(unittest.TestCase):
             "the refused item must never be cached as if it were translated",
         )
 
+    def test_a_transient_refusal_is_retried_before_splitting(self):
+        """One repeat is what recovers the provider's intermittent rejections.
+
+        Production symptom this pins: a refused 80-text batch was halved straight
+        away, so ten calls and 2m20s went into isolating a story that was never
+        the problem -- the identical batch translated cleanly when it was simply
+        sent again.
+        """
+        translator = RefuseOnceTranslator()
+        engine = DigestEngine(self.config, self.now, translator=translator)
+
+        engine.process(self.make_items(4), None, False)
+
+        self.assertEqual(
+            len(translator.calls), 2, "one rejected call plus one unchanged retry"
+        )
+        self.assertEqual(len(engine.translation_cache["entries"]), 4)
+
+    def test_an_expired_refusal_is_retried(self):
+        """A refusal is a deferral, not a verdict.
+
+        The provider rejects the same batch intermittently, so a permanent mark
+        would leave those stories in English forever.
+        """
+        translator = PoisonTranslator(poison="poison")
+        config = dict(self.config, TRANSLATION={
+            "BATCH_SIZE": 8, "MAX_NEW_PER_RUN": 50, "REFUSAL_RETRY_HOURS": 6})
+        items = self.make_items(2)
+        items[0]["title"] = "poison headline"
+
+        first = DigestEngine(config, self.now, translator=translator)
+        first.process(items, None, False)
+        self.assertTrue(first.translation_cache["refused"], "the refusal is recorded")
+
+        # Age every recorded refusal past its retry window.
+        cache_path = first.translation_cache_path
+        stored = json.loads(cache_path.read_text(encoding="utf-8"))
+        aged = (self.now - timedelta(hours=7)).isoformat()
+        stored["refused"] = {key: aged for key in stored["refused"]}
+        cache_path.write_text(json.dumps(stored, ensure_ascii=False), encoding="utf-8")
+
+        second_translator = PoisonTranslator(poison="poison")
+        second = DigestEngine(config, self.now, translator=second_translator)
+        second.process(items, None, False)
+
+        self.assertGreater(
+            len(second_translator.calls), 0, "an expired refusal must be retried"
+        )
+
     def test_refused_records_are_not_retried_on_later_runs(self):
-        """The provider's refusal is deterministic; re-splitting it every run is waste."""
+        """Inside its retry window a refusal is honoured, so no repeat is paid for."""
         translator = PoisonTranslator(poison="poison")
         config = dict(self.config, TRANSLATION={"BATCH_SIZE": 8, "MAX_NEW_PER_RUN": 50})
         items = self.make_items(4)
@@ -528,10 +599,18 @@ class TranslationPacingTest(unittest.TestCase):
 
     def test_yaml_limits_reach_the_engine(self):
         limits = _load_digest_config({"digest": {"translation": {
-            "batch_size": 7, "max_new_per_run": 11, "max_retry_calls": 3}}})["TRANSLATION"]
+            "batch_size": 7, "max_new_per_run": 11, "max_retry_calls": 3,
+            "refusal_retry_hours": 4}}})["TRANSLATION"]
         self.assertEqual(
-            limits, {"BATCH_SIZE": 7, "MAX_NEW_PER_RUN": 11, "MAX_RETRY_CALLS": 3}
+            limits,
+            {"BATCH_SIZE": 7, "MAX_NEW_PER_RUN": 11, "MAX_RETRY_CALLS": 3,
+             "REFUSAL_RETRY_HOURS": 4},
         )
+
+    def test_summary_allowance_reaches_the_engine(self):
+        digest = _load_digest_config({"digest": {"ai_summaries": {
+            "enabled": True, "batch_size": 9, "max_calls": 5}}})
+        self.assertEqual(digest["AI_SUMMARIES"]["MAX_CALLS"], 5)
 
     def test_environment_overrides_the_file(self):
         with mock.patch.dict(os.environ, {"TRANSLATION_MAX_NEW_PER_RUN": "20"}):
@@ -543,7 +622,9 @@ class TranslationPacingTest(unittest.TestCase):
     def test_defaults_bound_a_run(self):
         limits = _load_digest_config({"digest": {}})["TRANSLATION"]
         self.assertEqual(
-            limits, {"BATCH_SIZE": 40, "MAX_NEW_PER_RUN": 40, "MAX_RETRY_CALLS": 8}
+            limits,
+            {"BATCH_SIZE": 40, "MAX_NEW_PER_RUN": 40, "MAX_RETRY_CALLS": 8,
+             "REFUSAL_RETRY_HOURS": 6},
         )
 
     def test_call_budget_follows_the_queue_not_the_pool(self):
@@ -575,6 +656,76 @@ class TranslationPacingTest(unittest.TestCase):
             len(translator.calls), 10,
             "a 2000-article pool must not authorise ~100 calls",
         )
+
+
+class AiSummaryPacingTest(unittest.TestCase):
+    """The briefing's summary requests need an allowance of their own.
+
+    Production symptom this pins: the summary path halved a refused batch with no
+    budget at all, so a single rejected briefing could sit in recursive retries.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.now = datetime(2026, 9, 11, 8, 0, tzinfo=timezone.utc)
+        self.config = {
+            "ARCHIVE_DIR": str(Path(self.temp.name) / "briefings"),
+            "RETENTION_DAYS": 30,
+            "AI_SUMMARIES": {"ENABLED": True, "BATCH_SIZE": 20, "MAX_CALLS": 6},
+        }
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_summary_calls_are_bounded(self):
+        class RefusingClient:
+            def __init__(self):
+                self.calls = 0
+
+            def chat(self, messages, **kwargs):
+                self.calls += 1
+                raise RuntimeError("BadRequestError: Content Exists Risk")
+
+        client = RefusingClient()
+        engine = DigestEngine(self.config, self.now)
+        engine._get_ai_client = lambda: client
+        records = [
+            {"id": f"a{index}", "title": f"title {index}", "summary": f"feed {index}"}
+            for index in range(20)
+        ]
+
+        engine._apply_ai_summaries(records)
+
+        self.assertLessEqual(client.calls, 6, "the allowance must cap the fan-out")
+        self.assertEqual(
+            [record["summary"] for record in records],
+            [f"feed {index}" for index in range(20)],
+            "a refused summary must leave the rule-based text alone",
+        )
+
+    def test_a_transient_summary_refusal_is_repeated(self):
+        """An empty answer is the provider's intermittent filter, so repeat it."""
+
+        class FlakyClient:
+            def __init__(self):
+                self.calls = 0
+
+            def chat(self, messages, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return ""      # filtered to an empty body
+                return json.dumps([{"id": "a0", "summary": "中文简介"}])
+
+        client = FlakyClient()
+        engine = DigestEngine(self.config, self.now)
+        engine._get_ai_client = lambda: client
+        engine.state["articles"]["a0"] = {"id": "a0"}
+        records = [{"id": "a0", "title": "title", "summary": "feed"}]
+
+        engine._apply_ai_summaries(records)
+
+        self.assertEqual(client.calls, 2, "an empty answer is repeated once")
+        self.assertEqual(records[0]["summary"], "中文简介")
 
 
 if __name__ == "__main__":

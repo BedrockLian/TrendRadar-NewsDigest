@@ -143,18 +143,19 @@ def _load_digest_config(config_data: Dict) -> Dict:
     ai_summaries = digest.get("ai_summaries", {}) or {}
     translation = digest.get("translation", {}) or {}
 
-    def _translation_limit(env_key: str, yaml_key: str, default: int) -> int:
-        """每轮翻译的节奏上限：环境变量优先于 config.yaml
+    def _limit(env_key: str, section: Dict, yaml_key: str, default: int) -> int:
+        """每轮调用节奏的上限：环境变量优先于 config.yaml
 
-        These bound how much of the translation backlog a single crawl pays
-        for.  They used to be engine-only constants, which meant the documented
-        knob could not actually be tuned in production.
+        These bound how much of the translation backlog, and how many summary
+        calls, a single crawl pays for.  They used to be engine-only constants,
+        which meant the documented knob could not actually be tuned in
+        production.
         """
         env_value = _get_env_int_or_none(env_key)
         if env_value is not None:
             return env_value
         try:
-            return int(translation.get(yaml_key, default))
+            return int(section.get(yaml_key, default))
         except (TypeError, ValueError):
             return default
 
@@ -179,14 +180,18 @@ def _load_digest_config(config_data: Dict) -> Dict:
         "AI_SUMMARIES": {
             "ENABLED": ai_summaries.get("enabled", False),
             "BATCH_SIZE": ai_summaries.get("batch_size", 20),
+            "MAX_CALLS": _limit("AI_SUMMARIES_MAX_CALLS", ai_summaries, "max_calls", 8),
         },
         "TRANSLATION": {
-            "BATCH_SIZE": _translation_limit("TRANSLATION_BATCH_SIZE", "batch_size", 40),
-            "MAX_NEW_PER_RUN": _translation_limit(
-                "TRANSLATION_MAX_NEW_PER_RUN", "max_new_per_run", 40
+            "BATCH_SIZE": _limit("TRANSLATION_BATCH_SIZE", translation, "batch_size", 40),
+            "MAX_NEW_PER_RUN": _limit(
+                "TRANSLATION_MAX_NEW_PER_RUN", translation, "max_new_per_run", 40
             ),
-            "MAX_RETRY_CALLS": _translation_limit(
-                "TRANSLATION_MAX_RETRY_CALLS", "max_retry_calls", 8
+            "MAX_RETRY_CALLS": _limit(
+                "TRANSLATION_MAX_RETRY_CALLS", translation, "max_retry_calls", 8
+            ),
+            "REFUSAL_RETRY_HOURS": _limit(
+                "TRANSLATION_REFUSAL_RETRY_HOURS", translation, "refusal_retry_hours", 6
             ),
         },
         "WEEKLY": {
