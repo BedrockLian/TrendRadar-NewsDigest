@@ -31,6 +31,61 @@ GitHub Actions 不在当前支持范围内。`.github/workflows/crawler.yml` 保
 
 生产目录不是 Git 工作树。服务器代码由本地已提交版本生成 Git archive，再解压部署；不要在服务器上使用 `git pull` 判断或更新版本。
 
+### 2.1 SSH 连接与身份验证
+
+以下信息于 2026-09-11 在当前 Windows 开发机和生产服务器双向核验。仓库会被推送到 GitHub，因此这里只记录连接参数、密钥位置和公开指纹，不保存私钥正文、服务器密码、API Key 或通知令牌。
+
+| 项目 | 当前值 |
+| --- | --- |
+| SSH 别名 | `campus-server` |
+| 地址 | `43.128.10.41` |
+| 端口 | `22` |
+| 登录用户 | `root` |
+| 服务器主机名 | `VM-0-4-opencloudos` |
+| 本机 SSH 配置 | `C:\Users\ASUS\.ssh\config` |
+| 本机私钥 | `C:\Users\ASUS\.ssh\id_ed25519` |
+| 本机公钥 | `C:\Users\ASUS\.ssh\id_ed25519.pub` |
+| 已知主机记录 | `C:\Users\ASUS\.ssh\known_hosts` |
+| 服务器授权公钥文件 | `/root/.ssh/authorized_keys` |
+| 客户端公钥指纹 | `SHA256:HvKRu7LpuyrsZ8du6pL3e5vtP09wy5aWovg0CNF+LK4`（ED25519） |
+
+当前 `C:\Users\ASUS\.ssh\config` 中与生产服务器有关的有效配置为：
+
+```sshconfig
+Host campus-server
+  HostName 43.128.10.41
+  Port 22
+  User root
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+  StrictHostKeyChecking accept-new
+```
+
+本机私钥 ACL 只授予当前 Windows 用户、`SYSTEM` 和 `Administrators` 完全控制。服务器 `authorized_keys` 中已安装的公钥指纹与本机公钥指纹一致。对应公钥全文如下；公钥不是认证秘密：
+
+```text
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII1MMnGfd12g9Ob4Eji52xYGYBFMVns3AETtFQrHFEJ6 ASUS@ASUS-FX608LM
+```
+
+当前主机可以无交互执行：
+
+```powershell
+ssh -o BatchMode=yes campus-server 'whoami; hostname'
+scp .\待上传文件 campus-server:/tmp/
+```
+
+首次连接或重建 `known_hosts` 时，必须核对服务器主机指纹：
+
+| 类型 | SHA-256 指纹 |
+| --- | --- |
+| ED25519 | `SHA256:TtqUknO3nzVo19SaK2YdX8B82zo/5sNskeFbJqioLyk` |
+| ECDSA | `SHA256:KdnQsxTTKBiLkdDH0Ts2K6ES22nO9+mb732DZLlXty0` |
+| RSA | `SHA256:unywRck22+1g6ymQGSp996GDsbdbWWwYnLwUAKJvEpE` |
+
+服务器当前允许公钥认证，`AuthorizedKeysFile` 为 `.ssh/authorized_keys`。部署命令使用密钥认证，不依赖服务器密码；当前会话以 `root` 登录，因此无需额外 sudo 密码。
+
+其他 Agent 若运行在同一台 Windows 主机，直接使用 `ssh campus-server`，不得读取或复制私钥正文。迁移到另一台可信设备时，应通过密码管理器、加密移动介质或现有安全通道单独传送私钥，随后限制文件权限；不要通过 Git、聊天、邮件、日志或本文传递。更稳妥的做法是在新设备生成独立密钥，并通过现有连接把新公钥追加到 `/root/.ssh/authorized_keys`。完成后用上述指纹和 `BatchMode` 命令验证，再撤销不再使用的旧公钥。
+
 ## 3. 用户看到的产品行为
 
 首页是个人新闻编辑台，不是营销页。首屏优先显示最近一次已经完成的简报，并始终保留该简报，直到下一期真正生成。
