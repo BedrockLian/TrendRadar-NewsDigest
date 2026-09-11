@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from trendradar.digest import HomepageSnapshot
 from trendradar.digest.engine import safe_http_url
@@ -18,6 +19,11 @@ _DEFAULT_SLOTS = [
     {"key": "noon_digest", "name": "午间新闻简报", "start": "12:30"},
     {"key": "evening_digest", "name": "晚间新闻简报", "start": "20:00"},
 ]
+
+# Article summaries are the heaviest field in the homepage payload (~25% of
+# it) and are not needed to paint the first screen.  They ship as a sibling
+# JSON file that the browser pulls in right after first paint.
+SUMMARIES_FILENAME = "briefings-summaries.json"
 
 
 def _safe_json_data(value: Any) -> str:
@@ -57,11 +63,18 @@ def _safe_archive_url(url: str) -> str:
 
 
 def _public_item(item: Dict[str, Any]) -> Dict[str, str]:
-    """Keep only fields needed by the browser renderer."""
+    """Keep only fields needed by the browser renderer.
+
+    Two fields are deliberately reshaped for weight:
+
+    * ``summary`` moves to :func:`build_summaries_payload`, addressed by this
+      item's position in the payload;
+    * ``source_name`` / ``category_name`` become indices into the payload's
+      lookup arrays, stamped on by :func:`_prepare_payload`.
+    """
     return {
         "title": str(item.get("title") or ""),
         "url": safe_http_url(str(item.get("url") or "")),
-        "summary": str(item.get("summary") or ""),
         "source_name": str(item.get("source_name") or "RSS"),
         "published_at": str(item.get("published_at") or ""),
         "category_id": str(item.get("category_id") or "other"),
@@ -78,14 +91,102 @@ def _legacy_items(rss_items: Optional[List[Dict]]) -> List[Dict[str, str]]:
             items.append({
                 "title": str(item.get("title") or ""),
                 "url": safe_http_url(str(item.get("url") or "")),
-                "summary": str(item.get("summary") or ""),
                 "source_name": str(item.get("source_name") or "RSS"),
                 "published_at": str(item.get("time_display") or ""),
                 "category_id": "other",
                 "category_name": category,
                 "status": "new" if item.get("is_new") else "",
+                "summary": str(item.get("summary") or ""),
             })
     return items
+
+
+def _raw_items(
+    homepage_snapshot: Optional[HomepageSnapshot],
+    rss_items: Optional[List[Dict]],
+) -> List[Dict[str, Any]]:
+    """The single ordered source of truth for both payload and summaries."""
+
+    if homepage_snapshot:
+        return list(homepage_snapshot.all_news)
+    return _legacy_items(rss_items)
+
+
+def _prepare_payload(
+    homepage_snapshot: Optional[HomepageSnapshot],
+    rss_items: Optional[List[Dict]] = None,
+) -> Dict[str, Any]:
+    """Build the slim payload plus the data the sidecar needs to match it.
+
+    Ordering is decided exactly once, here, so the positional summary array can
+    never drift away from ``allNews``.
+    """
+
+    raw = _raw_items(homepage_snapshot, rss_items)
+    items = [_public_item(item) for item in raw]
+
+    sources: List[str] = []
+    source_index: Dict[str, int] = {}
+    categories: List[str] = []
+    category_index: Dict[str, int] = {}
+
+    for item in items:
+        name = item["source_name"]
+        if name not in source_index:
+            source_index[name] = len(sources)
+            sources.append(name)
+        item["_si"] = source_index[name]
+
+        name = item["category_name"]
+        # The categories array doubles as the dropdown options, so keep the
+        # digest's section order first and append anything else after it.
+        if name not in category_index:
+            category_index[name] = len(categories)
+            categories.append(name)
+        item["_ci"] = category_index[name]
+
+        # The names now live once in the lookup arrays above; per-item copies
+        # were ~32 KB of the payload.  The client resolves them back from _si
+        # and _ci during hydration.
+        del item["source_name"]
+        del item["category_name"]
+
+    return {
+        "items": items,
+        "summaries": [str(item.get("summary") or "") for item in raw],
+        "sources": sources,
+        "categories": categories,
+    }
+
+
+def build_summaries_payload(
+    homepage_snapshot: Optional[HomepageSnapshot],
+    rss_items: Optional[List[Dict]] = None,
+) -> List[str]:
+    """Return the summary for every entry of ``payload["allNews"]``, in order.
+
+    The empty string stands for "no summary", which keeps the array dense and
+    positional.
+    """
+
+    return _prepare_payload(homepage_snapshot, rss_items)["summaries"]
+
+
+def write_summaries_sidecar(
+    output_root: Union[Path, str],
+    homepage_snapshot: Optional[HomepageSnapshot],
+    rss_items: Optional[List[Dict]] = None,
+) -> str:
+    """Write ``output/briefings-summaries.json`` and return its path.
+
+    The sidecar carries exactly the summaries the homepage payload omits, in the
+    same order, so a browser can render the page first and enrich it after.
+    """
+
+    target = Path(output_root) / SUMMARIES_FILENAME
+    payload = build_summaries_payload(homepage_snapshot, rss_items)
+    target.write_text(_safe_json_data(payload), encoding="utf-8")
+    return str(target)
 
 
 def _render_alerts(snapshot: Optional[HomepageSnapshot]) -> str:
@@ -229,14 +330,34 @@ def render_html_content(
 ) -> str:
     """Render one dependency-free, responsive HTML document."""
     now = get_time_func() if get_time_func else datetime.now().astimezone()
-    current_items = [_public_item(item) for item in homepage_snapshot.all_news] if homepage_snapshot else _legacy_items(rss_items)
-    update_items = [_public_item(item) for item in homepage_snapshot.updates_since_digest] if homepage_snapshot else []
+    prepared = _prepare_payload(homepage_snapshot, rss_items)
+    current_items = prepared["items"]
+
+    # "updates since the briefing" is always a subset of allNews, so ship the
+    # positions instead of a second copy of every article object.
+    update_indices: List[int] = []
+    if homepage_snapshot:
+        position = {item["url"]: index for index, item in enumerate(current_items) if item["url"]}
+        seen: set = set()
+        for item in homepage_snapshot.updates_since_digest:
+            index = position.get(safe_http_url(str(item.get("url") or "")))
+            if index is not None and index not in seen:
+                seen.add(index)
+                update_indices.append(index)
+
+    # The categories array is the dropdown's option list, so the digest's own
+    # section order comes first and any remaining categories follow.
     categories: List[str] = []
     if homepage_snapshot and homepage_snapshot.latest_digest:
         categories.extend(str(section.get("name") or "其他重要新闻") for section in homepage_snapshot.latest_digest.sections)
-    categories.extend(item["category_name"] for item in current_items)
-    categories = list(dict.fromkeys(categories))
-    payload = _safe_json_data({"updates": update_items, "allNews": current_items, "categories": categories})
+    categories.extend(name for name in prepared["categories"] if name not in categories)
+    payload = _safe_json_data({
+        "updates": update_indices,
+        "allNews": current_items,
+        "categories": categories,
+        "sources": prepared["sources"],
+    })
+    summaries = _safe_json_data(prepared["summaries"])
     generated = _display_time(homepage_snapshot.generated_at if homepage_snapshot else now.isoformat(), "%Y-%m-%d %H:%M")
     replacements = {
         "__ALERTS__": _render_alerts(homepage_snapshot),
@@ -244,12 +365,14 @@ def render_html_content(
         "__DIGEST__": _render_digest(homepage_snapshot, len(current_items)),
         "__SIDEBAR_CATEGORIES__": _render_sidebar_categories(homepage_snapshot),
         "__AI_ANALYSIS__": _render_ai_analysis(ai_analysis),
-        "__UPDATES_HIDDEN__": "" if update_items else " hidden",
-        "__UPDATE_COUNT__": str(len(update_items)),
+        "__UPDATES_HIDDEN__": "" if update_indices else " hidden",
+        "__UPDATE_COUNT__": str(len(update_indices)),
         "__TOTAL_COUNT__": str(len(current_items)),
-        "__SOURCE_COUNT__": str(len({item["source_name"] for item in current_items if item["source_name"]})),
+        "__SOURCE_COUNT__": str(len(prepared["sources"])),
         "__CATEGORY_OPTIONS__": "".join(f'<option value="{html_escape(category)}">{html_escape(category)}</option>' for category in categories),
         "__HOMEPAGE_DATA__": payload,
+        "__SUMMARIES_FILENAME__": html_escape(SUMMARIES_FILENAME),
+        "__SUMMARIES_DATA__": summaries,
         "__GENERATED_AT__": html_escape(generated),
         "__GENERATED_DATE__": html_escape(generated.split(" ", 1)[0]),
     }

@@ -794,13 +794,57 @@ DOCUMENT = r'''<!doctype html>
   </div>
 
   <script id="homepage-data" type="application/json">__HOMEPAGE_DATA__</script>
+  <script id="summaries-data" type="application/json">__SUMMARIES_DATA__</script>
   <script>
     (function () {
       'use strict';
       var root = document.documentElement;
       var dataNode = document.getElementById('homepage-data');
-      var data = { updates: [], allNews: [], categories: [] };
+      var data = { updates: [], allNews: [], categories: [], sources: [] };
       try { data = JSON.parse(dataNode.textContent || '{}'); } catch (_) {}
+
+      // "updates since the briefing" ships as positions into allNews rather
+      // than a duplicated copy of every article object.
+      data.updates = (data.updates || []).map(function (index) {
+        return typeof index === 'number' ? data.allNews[index] : index;
+      }).filter(Boolean);
+      // source_name / category_name ship as lookup indices to keep the payload
+      // small; resolve them back to display strings once, here.
+      (data.allNews || []).forEach(function (item) {
+        if (typeof item._si === 'number') item.source_name = (data.sources || [])[item._si] || item.source_name;
+        if (typeof item._ci === 'number') item.category_name = (data.categories || [])[item._ci] || item.category_name;
+      });
+
+      // Summaries ship inline as a dense, positional array so the payload and
+      // this array cannot drift, then an identical sidecar is fetched right
+      // after first paint.  The fetch keeps the summary *array* cacheable on
+      // its own and lets the page render long before it lands.
+      var summariesNode = document.getElementById('summaries-data');
+      var SUMMARIES_URL = '__SUMMARIES_FILENAME__';
+      var summaries = [];
+      try { summaries = JSON.parse(summariesNode.textContent || '[]') || []; } catch (_) { summaries = []; }
+      // Position in the original payload array, so the positional summary
+      // array stays correct after the "newest/oldest" sort reorders the list.
+      (data.allNews || []).forEach(function (item, index) { item._oi = index; });
+      data.updates.forEach(function (item, index) { item._oi = -1 - index; });
+      function summaryOf(item, index) {
+        if (!item) return '';
+        var at = typeof item._oi === 'number' ? item._oi : index;
+        var value = summaries[at];
+        return typeof value === 'string' ? value : '';
+      }
+      function loadSummaries() {
+        if (typeof fetch !== 'function' || location.protocol === 'file:') return;
+        fetch(SUMMARIES_URL, { credentials: 'same-origin' })
+          .then(function (response) { return response.ok ? response.json() : null; })
+          .then(function (payload) {
+            if (!Array.isArray(payload)) return;
+            summaries = payload;
+            renderUpdates();
+            renderAll();
+          })
+          .catch(function () { /* inline copy stays authoritative */ });
+      }
 
       var PAGE_SIZE = 40;
       var FILTER_KEY = 'trendradar-filters-v1';
@@ -872,11 +916,14 @@ DOCUMENT = r'''<!doctype html>
         }
         headingWrap.appendChild(heading);
         copy.appendChild(headingWrap);
-        if (item.summary && !compact) {
-          var summary = document.createElement('p');
-          summary.className = 'article-summary';
-          summary.textContent = item.summary;
-          copy.appendChild(summary);
+        if (!compact) {
+          var summaryText = summaryOf(item, index);
+          if (summaryText) {
+            var summary = document.createElement('p');
+            summary.className = 'article-summary';
+            summary.textContent = summaryText;
+            copy.appendChild(summary);
+          }
         }
         article.appendChild(copy);
 
@@ -910,7 +957,7 @@ DOCUMENT = r'''<!doctype html>
         var selectedCategory = category.value;
         var selectedSource = source.value;
         var items = data.allNews.filter(function (item) {
-          var haystack = [item.title, item.summary, item.source_name].join(' ').toLocaleLowerCase('zh-CN');
+          var haystack = [item.title, summaryOf(item, item._oi), item.source_name].join(' ').toLocaleLowerCase('zh-CN');
           return (!query || haystack.indexOf(query) !== -1) &&
             (selectedCategory === 'all' || item.category_name === selectedCategory) &&
             (selectedSource === 'all' || item.source_name === selectedSource);
@@ -1073,6 +1120,11 @@ DOCUMENT = r'''<!doctype html>
       syncTheme();
       syncSidebarButtons();
       syncNav();
+
+      // First paint is already done. Pull the authoritative summary array and
+      // re-render once it lands; until then the inline copy above is in use.
+      if (document.readyState === 'complete') loadSummaries();
+      else window.addEventListener('load', loadSummaries);
     })();
   </script>
 </body>

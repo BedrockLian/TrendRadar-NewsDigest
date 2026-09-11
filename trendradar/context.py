@@ -32,6 +32,7 @@ from trendradar.report import (
     generate_html_report,
     render_html_content,
 )
+from trendradar.report.html import write_summaries_sidecar
 from trendradar.notification import (
     render_feishu_content,
     render_dingtalk_content,
@@ -339,6 +340,9 @@ class AppContext:
             render_html_func=lambda *args, **kwargs: self.render_html(*args, rss_items=rss_items, rss_new_items=rss_new_items, ai_analysis=ai_analysis, standalone_data=standalone_data, homepage_snapshot=homepage_snapshot, **kwargs),
             report_metadata=report_metadata,
             translate_report_func=translate_report_func,
+            summaries_writer=lambda output_root: write_summaries_sidecar(
+                output_root, homepage_snapshot, rss_items
+            ),
         )
 
     def render_html(

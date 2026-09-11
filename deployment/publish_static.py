@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import BinaryIO, Iterator
 
 from trendradar.report.archive import build_index
+from trendradar.report.html import SUMMARIES_FILENAME
+
+from deployment.compress import compress_tree
 
 
 def _resolved_directory(path: Path) -> Path:
@@ -172,6 +175,18 @@ def publish_static(output_dir: Path, public_dir: Path) -> Path:
             _copy_markdown_archive(output / "briefings", staged_archive)
             build_index(staged_archive)
             shutil.copy2(source_index, staged / "index.html")
+
+            # Optional sibling data file holding the article summaries the
+            # homepage payload omits.  Whitelisted by exact name only.
+            source_summaries = output / SUMMARIES_FILENAME
+            if source_summaries.is_file() and not source_summaries.is_symlink():
+                shutil.copy2(source_summaries, staged / SUMMARIES_FILENAME)
+
+            # Precompress every text asset once, here, so the origin never has
+            # to gzip the homepage per request.  ``.gz`` sidecars are derived
+            # artifacts of files that are already public, so the whitelist of
+            # *sources* is unchanged.
+            compress_tree(staged)
 
             _replace_directory(staged, public, backup)
         finally:

@@ -154,6 +154,7 @@ def generate_html_report(
     render_html_func: Optional[Callable] = None,
     report_metadata: Optional[Dict] = None,
     translate_report_func: Optional[Callable] = None,
+    summaries_writer: Optional[Callable[[Path], None]] = None,
 ) -> str:
     """
     生成 HTML 报告
@@ -176,6 +177,7 @@ def generate_html_report(
         date_folder: 日期文件夹名称
         time_filename: 时间文件名
         render_html_func: HTML 渲染函数
+        summaries_writer: 可选回调，参数为 output 目录；用于写出首页摘要旁车文件
 
     Returns:
         str: 生成的 HTML 文件路径（时间戳快照路径）
@@ -237,6 +239,10 @@ def generate_html_report(
     output_index = Path(output_dir) / "index.html"
     with open(output_index, "w", encoding="utf-8") as f:
         f.write(html_content)
+
+    # 4. 摘要旁车文件（供首页按需加载）
+    if summaries_writer:
+        summaries_writer(output_index.parent)
 
     # 根目录 index.html（供 GitHub Pages 访问）
     root_index = Path("index.html")
