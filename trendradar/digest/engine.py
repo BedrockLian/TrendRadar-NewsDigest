@@ -575,16 +575,27 @@ class DigestEngine:
             return None
 
         translated = [(item.translated_text or "").strip() for item in results]
-        failed = any(str(getattr(item, "error", "") or "") for item in results)
+
+        # A refused request can surface three ways, and only the third was
+        # obvious:
+        #   * AITranslator reports it per item in ``error``;
+        #   * the model answers with something the parser cannot read, leaving
+        #     ``parsed_count`` at 0;
+        #   * the model returns content that is filtered to an empty string.
+        # In every case AITranslator falls back to echoing the source text, so
+        # the echoed text itself is never evidence of success.
+        parsed_count = getattr(result, "parsed_count", None)
+        failed = (
+            any(str(getattr(item, "error", "") or "") for item in results)
+            or parsed_count == 0
+            or not any(translated)
+        )
 
         if not failed:
             return translated
 
-        # The request was refused.  AITranslator catches the provider error and
-        # reports it per item while echoing the source text back, so the failure
-        # has to be read from ``error`` -- the echoed text looks like a
-        # successful translation otherwise.  Split the batch to isolate the
-        # offending item instead of losing every text in it.
+        # Split the batch to isolate the offending item instead of losing every
+        # text in it.
         if len(texts) <= 2:
             if not self._translation_error_logged:
                 reason = next(

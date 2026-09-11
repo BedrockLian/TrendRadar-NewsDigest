@@ -75,6 +75,29 @@ class PoisonTranslator(StubTranslator):
         return StubBatch([StubTranslation(f"{self.prefix}{text}") for text in texts])
 
 
+class EmptyResponseTranslator(StubTranslator):
+    """Returns an unparseable/empty answer the way a filtered request does.
+
+    This is the exact production failure: the model's content is filtered to an
+    empty string, AITranslator cannot parse anything, and it echoes the source
+    back with success=True and no error -- so an error-based check sees nothing.
+    """
+
+    def __init__(self, poison="poison", prefix="【译】"):
+        super().__init__(prefix=prefix)
+        self.poison = poison
+
+    def translate_batch(self, texts):
+        self.calls.append(list(texts))
+        if any(self.poison in text for text in texts):
+            batch = StubBatch([StubTranslation(text) for text in texts])
+            batch.parsed_count = 0          # nothing was parsed
+            return batch
+        batch = StubBatch([StubTranslation(f"{self.prefix}{text}") for text in texts])
+        batch.parsed_count = len(texts)
+        return batch
+
+
 class TranslationTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -304,7 +327,8 @@ class TranslationTest(unittest.TestCase):
         """A provider refusal must not discard the other stories in the batch.
 
         Production symptom this pins: one risky headline made a 240-text request
-        fail, the parser echoed every input, and the run cached nothing at all.
+        come back unparseable, the parser echoed every input with success=True,
+        and the run cached nothing at all while the log said 20/20 succeeded.
         """
         translator = PoisonTranslator(poison="poison")
         config = dict(self.config, TRANSLATION={"BATCH_SIZE": 8, "MAX_NEW_PER_RUN": 50})
@@ -319,6 +343,28 @@ class TranslationTest(unittest.TestCase):
         self.assertEqual(len(translated), 3, "the other three stories must survive")
         self.assertLessEqual(
             len(translator.calls), 12, "splitting must terminate, not retry forever"
+        )
+
+    def test_unparseable_response_is_treated_as_a_refusal(self):
+        """success=True plus an echoed source is not evidence of translation."""
+        translator = EmptyResponseTranslator(poison="poison")
+        config = dict(self.config, TRANSLATION={"BATCH_SIZE": 8, "MAX_NEW_PER_RUN": 50})
+        engine = DigestEngine(config, self.now, translator=translator)
+
+        items = self.make_items(4)
+        items[1]["title"] = "poison headline the model will not repeat"
+        engine.process(items, None, False)
+
+        entries = engine.translation_cache["entries"]
+        translated = [v for v in entries.values() if v.get("title_zh", "").startswith("【译】")]
+        self.assertEqual(
+            len(translated), 3,
+            "an unparseable batch must be split, not silently echoed",
+        )
+        self.assertTrue(
+            all(not v.get("title_zh", "").startswith("poison")
+                for v in entries.values()),
+            "the refused item must never be cached as if it were translated",
         )
 
     def test_backfill_does_not_stall_on_a_pool_larger_than_the_ceiling(self):
