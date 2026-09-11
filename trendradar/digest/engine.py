@@ -155,6 +155,7 @@ class DigestEngine:
         # lifetimes.
         self.translation_cache_path = self.archive_dir / ".translations.json"
         self.translation_cache = self._load_translation_cache()
+        self._translation_refused_keys = set(self.translation_cache["refused"])
         # Records this engine instance has already paid to translate.  The
         # engine translates more than once per run (before the digest, then for
         # the digest's own selection, then again by the notification pipeline),
@@ -167,6 +168,12 @@ class DigestEngine:
         # print for every retry.
         self._translation_error_logged = False
         self._ai_summary_error_logged = False
+        # Records the provider filtered during THIS run.  Splitting must not
+        # re-queue them through a different pass in the same process.
+        self._translation_refused: set = set()
+        # Hash -> ISO timestamp for records the provider has refused.  Without
+        # this the split retries every rejected story on every run forever.
+        self._translation_refused_keys = set(self.translation_cache["refused"])
 
     def process(
         self,
@@ -496,16 +503,17 @@ class DigestEngine:
 
     def _load_translation_cache(self) -> Dict[str, Any]:
         if not self.translation_cache_path.is_file():
-            return {"version": 1, "entries": {}}
+            return {"version": 1, "entries": {}, "refused": {}}
         try:
             data = json.loads(self.translation_cache_path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 data.setdefault("version", 1)
                 data.setdefault("entries", {})
+                data.setdefault("refused", {})
                 return data
         except (OSError, ValueError):
             pass
-        return {"version": 1, "entries": {}}
+        return {"version": 1, "entries": {}, "refused": {}}
 
     def _save_translation_cache(self) -> None:
         target = self.translation_cache_path
@@ -518,6 +526,13 @@ class DigestEngine:
             if key in self._translation_removed:
                 continue
             self.translation_cache["entries"].setdefault(key, value)
+        # Persist refusals so a filtered story is not re-split on every run.
+        # Keys this instance pruned stay pruned.
+        refused = self.translation_cache.setdefault("refused", {})
+        for key in self._translation_refused:
+            if key in self._translation_removed:
+                continue
+            refused.setdefault(key, self.now.isoformat())
         # The temp file must sit beside its target: ``os.replace`` is only
         # atomic within one filesystem, and a cross-device move raises here,
         # which would abort the rest of the run.
@@ -551,7 +566,7 @@ class DigestEngine:
                     return str(translated)
         return str(record.get(field) or "")
 
-    def _translate_texts(self, texts: List[str]) -> Optional[List[str]]:
+    def _translate_texts(self, texts: List[str], keys: Optional[List[str]] = None) -> Optional[List[str]]:
         """Translate ``texts``, splitting the batch when the provider refuses it.
 
         A single rejected item poisons the whole request: the provider answers
@@ -559,6 +574,9 @@ class DigestEngine:
         input, so nothing gets translated and the caller correctly discards the
         lot.  Retrying as two halves isolates the offending item instead of
         losing the other hundreds of texts with it.
+
+        ``keys`` carries the content hash of the record behind every text so a
+        refused record can be remembered and never paid for again.
         """
 
         try:
@@ -602,10 +620,15 @@ class DigestEngine:
                 reason = next(
                     (str(getattr(item, "error", "")) for item in results
                      if str(getattr(item, "error", "") or "")),
-                    "",
+                    "empty or unparseable response",
                 )
-                print(f"[简报] 翻译被拒绝，放弃 {len(texts)} 条: {reason[:100]}")
+                print(f"[简报] 翻译被拒绝，跳过 {len(texts)} 条: {reason[:100]}")
                 self._translation_error_logged = True
+            if keys:
+                for key in keys:
+                    if key:
+                        self._translation_refused.add(key)
+                        self._translation_refused_keys.add(key)
             return None
 
         middle = max(1, len(texts) // 2)
@@ -613,8 +636,8 @@ class DigestEngine:
             # Keep title/summary pairs together when splitting.
             middle += 1
         middle = min(middle, len(texts) - 1)
-        left = self._translate_texts(texts[:middle])
-        right = self._translate_texts(texts[middle:])
+        left = self._translate_texts(texts[:middle], keys[:middle] if keys else None)
+        right = self._translate_texts(texts[middle:], keys[middle:] if keys else None)
         if left is None and right is None:
             return None
         if left is None:
@@ -666,6 +689,11 @@ class DigestEngine:
                 continue
             if isinstance(entries.get(key), dict):
                 continue
+            # Already refused by the provider (in this run or a previous one).
+            # Retrying is pointless: the filter answer is deterministic, and the
+            # split would otherwise re-descend the same stories every run.
+            if key in self._translation_refused_keys or key in self._translation_refused:
+                continue
             # The bounded backfill pass must not re-queue what an earlier
             # backfill pass deferred.  The unbounded pass (the briefing's own
             # selection) deliberately ignores this and translates whatever is
@@ -691,11 +719,15 @@ class DigestEngine:
         for offset in range(0, len(pending), batch_size):
             batch = pending[offset : offset + batch_size]
             texts: List[str] = []
+            keys: List[str] = []
             for record in batch:
                 texts.append(str(record.get("title") or ""))
                 texts.append(str(record.get("summary") or ""))
+                key = str(record.get("content_hash") or "")
+                keys.append(key)
+                keys.append(key)
 
-            translated = self._translate_texts(texts)
+            translated = self._translate_texts(texts, keys)
             if translated is None:
                 continue
 
@@ -741,7 +773,14 @@ class DigestEngine:
         for key in stale:
             del entries[key]
             self._translation_removed.add(key)
-        if stale:
+        refused = self.translation_cache.get("refused", {})
+        dropped_refusals = [key for key in refused if key not in live]
+        for key in dropped_refusals:
+            del refused[key]
+            # Also drop it from this run's refusal set, or the save below would
+            # immediately re-add what the prune just removed.
+            self._translation_refused.discard(key)
+        if stale or dropped_refusals:
             self._save_translation_cache()
 
     def _article_id(self, item: Dict[str, Any]) -> str:

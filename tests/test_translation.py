@@ -367,6 +367,43 @@ class TranslationTest(unittest.TestCase):
             "the refused item must never be cached as if it were translated",
         )
 
+    def test_refused_records_are_not_retried_on_later_runs(self):
+        """The provider's refusal is deterministic; re-splitting it every run is waste."""
+        translator = PoisonTranslator(poison="poison")
+        config = dict(self.config, TRANSLATION={"BATCH_SIZE": 8, "MAX_NEW_PER_RUN": 50})
+        items = self.make_items(4)
+        items[1]["title"] = "poison headline that the provider refuses"
+
+        first = DigestEngine(config, self.now, translator=translator)
+        first.process(items, None, False)
+        calls_after_first = len(translator.calls)
+
+        second_translator = PoisonTranslator(poison="poison")
+        second = DigestEngine(config, self.now, translator=second_translator)
+        second.process(items, None, False)
+
+        self.assertEqual(
+            len(second_translator.calls), 0,
+            "an already-refused record must not be sent again",
+        )
+        self.assertGreater(calls_after_first, 0)
+        # The refusal is remembered, so the surviving entries stay cached.
+        self.assertEqual(len(second.translation_cache["entries"]), 3)
+
+    def test_refusals_are_pruned_with_their_articles(self):
+        translator = PoisonTranslator(poison="poison")
+        config = dict(self.config, TRANSLATION={"BATCH_SIZE": 8, "MAX_NEW_PER_RUN": 50})
+        items = self.make_items(2)
+        items[0]["title"] = "poison headline"
+        engine = DigestEngine(config, self.now, translator=translator)
+        engine.process(items, None, False)
+        self.assertTrue(engine.translation_cache["refused"])
+
+        engine.state["articles"] = {}
+        engine._prune_translation_cache()
+
+        self.assertEqual(engine.translation_cache["refused"], {})
+
     def test_backfill_does_not_stall_on_a_pool_larger_than_the_ceiling(self):
         """A bounded pass must skip what it deferred, or it never progresses.
 
