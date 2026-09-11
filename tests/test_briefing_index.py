@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from deployment.build_briefing_index import build_index, collect_entries
+from trendradar.report.archive import build_index, collect_entries
 
 
 class BriefingIndexTest(unittest.TestCase):

@@ -1,0 +1,12 @@
+/.venv/
+/dist/
+/output/
+/public/
+.*.run.lock
+.*.publish.lock
+/.public.next-*
+/.public.previous-*
+
+__pycache__/
+*.py[cod]
+.pytest_cache/

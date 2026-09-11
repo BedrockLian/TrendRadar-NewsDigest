@@ -128,7 +128,6 @@ systemd timer / Docker supercronic / 手动命令
 | `trendradar/digest/engine.py` | 观察文章、去重、分类、选稿、突发判断、简报状态、Markdown 存档和公开快照 |
 | `trendradar/report/html.py` | 无前端框架、无 CDN 的首页 HTML/CSS/JS；服务端渲染简报，客户端处理更新和全部新闻 |
 | `trendradar/report/archive.py` | 扫描 Markdown，生成 `briefings/index.html` 归档页；主程序与发布器共用 |
-| `deployment/build_briefing_index.py` | 归档索引生成器的兼容命令入口 |
 | `deployment/run_once.py` | 用整轮运行锁串行化“采集 → 生成 → 发布” |
 | `deployment/publish_static.py` | 构建公开文件白名单、生成归档索引、整体切换公开目录 |
 | `deployment/run.sh` | 校园服务器 systemd 的单次入口 |
@@ -308,7 +307,11 @@ trendradar-collect.timer
 - `ProtectSystem=strict`；
 - 仅 `/opt/trendradar` 可写。
 
-环境变量位于 `/opt/trendradar/config/news-digest.env`，不要把值写进仓库或交接文档。Nginx 应把 `https://news.blian117.dpdns.org/` 指向 `/opt/trendradar/public`。
+环境变量位于 `/opt/trendradar/config/news-digest.env`，不要把值写进仓库或交接文档。该文件应由 `root:trendradar` 持有并设为 `0640`。
+
+AI 简介使用 `AI_API_KEY`、`AI_MODEL`，兼容接口按需增加 `AI_API_BASE`。没有密钥或接口失败时，简报和统计周报仍使用 RSS 摘要生成。通知复用项目现有环境变量，例如 `FEISHU_WEBHOOK_URL`、`DINGTALK_WEBHOOK_URL`、`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` 和邮件变量；未配置渠道时只采集并生成网页与 Markdown。
+
+Nginx 应把 `https://news.blian117.dpdns.org/` 指向 `/opt/trendradar/public`。
 
 ## 8. 生产发布工作流
 
@@ -372,7 +375,7 @@ sudo systemctl start trendradar-collect.service
 ```powershell
 $env:PYTHONIOENCODING = 'utf-8'
 uv run --frozen python -m unittest discover -s tests -p 'test_*.py'
-uv run --frozen python -m py_compile deployment/build_briefing_index.py deployment/publish_static.py deployment/run_once.py docker/manage.py trendradar/__main__.py trendradar/context.py trendradar/core/scheduler.py trendradar/digest/engine.py trendradar/report/archive.py trendradar/report/html.py
+uv run --frozen python -m py_compile deployment/publish_static.py deployment/run_once.py docker/manage.py trendradar/__main__.py trendradar/context.py trendradar/core/scheduler.py trendradar/digest/engine.py trendradar/report/archive.py trendradar/report/html.py
 git diff --check
 ```
 

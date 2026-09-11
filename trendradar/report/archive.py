@@ -401,7 +401,7 @@ def build_index(root: Path, generated_at: datetime | None = None) -> Path:
 
 def main() -> None:
     if len(sys.argv) != 2:
-        raise SystemExit("用法：build_briefing_index.py <简报目录>")
+        raise SystemExit("用法：python -m trendradar.report.archive <简报目录>")
     build_index(Path(sys.argv[1]))
 
 
