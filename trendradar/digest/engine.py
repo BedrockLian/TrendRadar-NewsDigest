@@ -322,6 +322,7 @@ class DigestEngine:
                 titles.append(
                     {
                         "title": self._localized(item, "title"),
+                        "source_title": str(item.get("source_title") or item.get("title") or ""),
                         "url": safe_http_url(str(item.get("url") or "")),
                         "summary": self._localized(item, "summary"),
                         "source_name": source_name,
@@ -526,12 +527,18 @@ class DigestEngine:
                     return str(translated)
         return str(record.get(field) or "")
 
-    def _translate_articles(self, records: List[Dict[str, Any]]) -> int:
+    def _translate_articles(
+        self, records: List[Dict[str, Any]], *, ignore_ceiling: bool = False
+    ) -> int:
         """Translate titles and summaries for the given records, with caching.
 
         Cached by ``content_hash``, which is derived from title + summary +
         published_at, so a story is translated once and reused across every
         later crawl and briefing.  Returns how many records hit the network.
+
+        ``ignore_ceiling`` is for the briefing's own selection: the per-run
+        ceiling exists to bound *backfill* spend, and must never leave the
+        briefing itself in the source language.
         """
 
         if not self.translator or not getattr(self.translator, "enabled", False):
@@ -541,13 +548,17 @@ class DigestEngine:
 
         settings = self.config.get("TRANSLATION", {}) or {}
         batch_size = max(1, int(settings.get("BATCH_SIZE", 40)))
-        # Hard ceiling per run so a large backfill can never produce a surprise
-        # API bill; the cache catches up over the following runs.
-        max_new = max(0, int(settings.get("MAX_NEW_PER_RUN", 120)))
+        # Bound on how many *new* records one run will pay for, so a large
+        # backlog can never produce a surprise API bill; the cache catches up
+        # over the following runs.  ``None`` means unbounded.
+        ceiling = None if ignore_ceiling else max(0, int(settings.get("MAX_NEW_PER_RUN", 120)))
 
         entries = self.translation_cache["entries"]
         pending: List[Dict[str, Any]] = []
+        queued_here = 0
         for record in records:
+            if ceiling is not None and queued_here >= ceiling:
+                break
             key = str(record.get("content_hash") or "")
             if not key:
                 continue
@@ -557,16 +568,16 @@ class DigestEngine:
                 self._needs_translation(str(record.get("summary") or ""))
             ):
                 # Already Chinese: record the decision so the record is not
-                # re-examined on every later crawl.
+                # re-examined on every later crawl.  Free, so it never counts
+                # against the ceiling.
                 entries[key] = {
                     "title_zh": str(record.get("title") or ""),
                     "summary_zh": str(record.get("summary") or ""),
                     "at": self.now.isoformat(),
                 }
                 continue
-            if len(pending) >= max_new:
-                continue
             pending.append(record)
+            queued_here += 1
 
         translated_count = 0
         for offset in range(0, len(pending), batch_size):
@@ -701,7 +712,11 @@ class DigestEngine:
         categories: List[str] = []
         for index, item in enumerate(ordered):
             url_key = canonical_url(item["url"])
-            title_key = normalize_title(item["title"])
+            # A record that already appeared in a briefing carries the translated
+            # title; dedup must keep comparing the feed's own text.
+            title_key = normalize_title(
+                str(item.get("source_title") or item.get("title") or "")
+            )
             title_keys.append(title_key)
             categories.append(self._category_for(item).get("ID", "other"))
             if url_key in url_owner:
@@ -956,6 +971,11 @@ class DigestEngine:
         selected = self._select(self._candidate_records())
         if not selected:
             return None
+        # The per-crawl pass only reaches the newest slice of the pool, so the
+        # stories that actually made the briefing are translated again here.
+        # Already-cached entries cost nothing, and this guarantees the briefing
+        # -- the thing a reader sees first -- is always in the target language.
+        self._translate_articles(selected, ignore_ceiling=True)
         self._apply_ai_summaries(selected)
         archive_path = self._digest_archive_path(period_key)
         result = self._result_from_records(
@@ -1122,6 +1142,11 @@ class DigestEngine:
                 label = "突发" if record.get("breaking") else "更新" if record.get("status") == "updated" else ""
                 titles.append({
                     "title": self._localized(record, "title"),
+                    # Kept so the next crawl can still match this article
+                    # against the feed's original title; once a briefing exists
+                    # the projection is the translated string, and dedup/identity
+                    # must not start keying on Chinese text.
+                    "source_title": str(record.get("title") or ""),
                     "source_name": record.get("feed_name", "RSS"),
                     "time_display": record.get("published_at", ""),
                     "count": 1,

@@ -82,9 +82,9 @@ class TranslationTest(unittest.TestCase):
     def make_items(self, count=4):
         """Distinct stories: item() keys article identity on feed + index.
 
-        Titles are deliberately made dissimilar.  The engine's near-duplicate
-        guard merges titles that differ by a single character once they exceed
-        the similarity ratio, so a lettered series would collapse to one story.
+        Subjects are deliberately dissimilar.  The engine's near-duplicate guard
+        merges titles that differ by a single character once they exceed the
+        similarity ratio, so a lettered series would collapse into one story.
         """
         subjects = [
             "Wireless chip breakthrough announced by researchers",
@@ -95,10 +95,18 @@ class TranslationTest(unittest.TestCase):
             "Compiler team ships a faster garbage collector",
             "Undersea cable outage affects three regions",
             "Standards body ratifies a new video codec",
+            "Retailer pilots drone delivery in rural counties",
+            "Hospital network migrates records to a new platform",
+            "Satellite operator expands its ground station fleet",
+            "Battery chemistry shift lowers pack costs",
+            "Panel maker reports a yield improvement",
+            "Search engine adds on-device indexing",
+            "Robotics lab demonstrates a bipedal stair climb",
+            "Weather service upgrades its forecast model",
         ]
         return [
             item(i, "tech1", title=subjects[i % len(subjects)],
-                 summary=f"Engineers describe a new approach in report {i}")
+                 summary=f"Reporters describe a distinct development in brief {i}")
             for i in range(count)
         ]
 
@@ -232,6 +240,31 @@ class TranslationTest(unittest.TestCase):
                 self.assertTrue(
                     entry["title"].startswith("【译】"),
                     "the briefing projection must use the cached translation",
+                )
+
+    def test_briefing_translates_its_own_selection(self):
+        """Digest articles must be translated even if the crawl pass missed them.
+
+        The per-crawl pass is capped per run, so a story can be selected for a
+        briefing before its turn came in the backfill.  The briefing is what a
+        reader sees first, so it cannot depend on that ordering.
+        """
+        translator = StubTranslator()
+        # A tiny backfill ceiling, so most of the pool is NOT translated by the
+        # crawl pass; the briefing must still come out translated.
+        config = dict(self.config, TRANSLATION={"BATCH_SIZE": 10, "MAX_NEW_PER_RUN": 2})
+        engine = DigestEngine(config, self.now, translator=translator)
+        pool = self.make_items(12)
+
+        result = engine.process(pool, "morning_digest", True)
+
+        self.assertIsNotNone(result)
+        self.assertTrue(result.articles)
+        for stat in result.stats:
+            for entry in stat.get("titles", []):
+                self.assertTrue(
+                    entry["title"].startswith("【译】"),
+                    f"briefing entry left untranslated: {entry['title']}",
                 )
 
     def test_per_run_ceiling_bounds_api_usage(self):
