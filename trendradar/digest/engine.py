@@ -578,7 +578,13 @@ class DigestEngine:
             key = str(record.get("content_hash") or "")
             if not key:
                 continue
-            if isinstance(entries.get(key), dict) or key in self._translation_attempted:
+            if isinstance(entries.get(key), dict):
+                continue
+            # The bounded backfill pass must not re-queue what an earlier
+            # backfill pass deferred, or a pool larger than the ceiling never
+            # makes progress.  The unbounded pass (the briefing's own selection)
+            # deliberately ignores this and translates whatever is missing.
+            if ceiling is not None and key in self._translation_attempted:
                 continue
             if not self._needs_translation(str(record.get("title") or "")) and not (
                 self._needs_translation(str(record.get("summary") or ""))

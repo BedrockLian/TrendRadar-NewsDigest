@@ -277,16 +277,29 @@ class TranslationTest(unittest.TestCase):
             "an entry written by the first engine disappeared",
         )
 
-    def test_one_engine_does_not_retranslate_within_a_run(self):
-        """The engine translates several times per run; it must pay once."""
-        translator = StubTranslator()
-        items = self.make_items(3)
-        engine = DigestEngine(self.config, self.now, translator=translator)
-        engine.process(items, "morning_digest", True)
+    def test_backfill_does_not_stall_on_a_pool_larger_than_the_ceiling(self):
+        """A bounded pass must skip what it deferred, or it never progresses.
 
-        title_summary_texts = sum(len(call) for call in translator.calls)
-        # 3 records x (title + summary) once, and nothing on the later passes.
-        self.assertEqual(title_summary_texts, 6)
+        Every crawl pass sees the same pool in the same order, so without this
+        the ceiling would always be spent on the same leading records and the
+        rest of the backlog would never be reached.
+        """
+        translator = StubTranslator()
+        config = dict(self.config, TRANSLATION={"BATCH_SIZE": 10, "MAX_NEW_PER_RUN": 3})
+        engine = DigestEngine(config, self.now, translator=translator)
+        items = self.make_items(12)
+
+        engine.process(items, None, False)
+        first_keys = set(engine.translation_cache["entries"])
+        self.assertEqual(len(first_keys), 3, "the ceiling caps the first pass")
+
+        # A second run must reach different records, not the same three again.
+        engine2 = DigestEngine(config, self.now, translator=translator)
+        engine2.process(items, None, False)
+        second_keys = set(engine2.translation_cache["entries"])
+
+        self.assertEqual(len(second_keys), 6, "the second pass adds three more")
+        self.assertTrue(first_keys.issubset(second_keys))
 
     def test_already_translated_content_is_used_by_the_digest_too(self):
         translator = StubTranslator()
