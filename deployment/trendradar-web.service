@@ -1,0 +1,22 @@
+[Unit]
+Description=TrendRadar static report server
+After=network.target
+
+[Service]
+User=trendradar
+Group=trendradar
+WorkingDirectory=/opt/trendradar
+# Serves /opt/trendradar/public through deployment.serve_public, which prefers
+# the precompressed .gz sidecars written at publish time.  The standard library
+# http.server has no Content-Encoding support and made Nginx gzip the ~530 KB
+# homepage on every single request.
+ExecStart=/opt/trendradar/.venv/bin/python -m deployment.serve_public --directory /opt/trendradar/public --port 18080 --bind 127.0.0.1
+Restart=on-failure
+MemoryMax=100M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
