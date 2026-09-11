@@ -193,6 +193,9 @@ def _load_digest_config(config_data: Dict) -> Dict:
             "REFUSAL_RETRY_HOURS": _limit(
                 "TRANSLATION_REFUSAL_RETRY_HOURS", translation, "refusal_retry_hours", 6
             ),
+            "MAX_PASS_SECONDS": _limit(
+                "TRANSLATION_MAX_PASS_SECONDS", translation, "max_pass_seconds", 75
+            ),
         },
         "WEEKLY": {
             "ENABLED": weekly.get("enabled", True),

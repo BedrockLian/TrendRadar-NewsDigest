@@ -260,10 +260,18 @@ Docker 部署另有其路径：`http.server` 在容器内提供 `/app/public`（
 | `max_new_per_run` | 40 | 单轮最多为多少条新记录付费 |
 | `max_retry_calls` | 8 | 被内容风控拒绝后允许的额外重试与切分调用次数 |
 | `refusal_retry_hours` | 6 | 被拒条目多少小时后重新尝试 |
+| `max_pass_seconds` | 75 | 单轮回填的墙钟上限；到点收工，剩余下轮继续 |
 
 环境变量 `TRANSLATION_BATCH_SIZE` / `TRANSLATION_MAX_NEW_PER_RUN` /
-`TRANSLATION_MAX_RETRY_CALLS` / `TRANSLATION_REFUSAL_RETRY_HOURS`
-优先于文件值。这些值经 `_load_digest_config()` 进入引擎的 `TRANSLATION` 段。
+`TRANSLATION_MAX_RETRY_CALLS` / `TRANSLATION_REFUSAL_RETRY_HOURS` /
+`TRANSLATION_MAX_PASS_SECONDS` 优先于文件值。这些值经 `_load_digest_config()` 进入引擎的
+`TRANSLATION` 段。
+
+**时间才是要卡住的量。** 供应商会成段拒绝：2026-09-11 23:30 那轮 10 次调用耗时 221 秒、
+只落地 28/40 条，整轮 5 分 22 秒（当时只有调用次数上限）。因此 `_translate_texts()` 在每次
+调用前检查墙钟截止时间（`max_pass_seconds`，默认 75 秒），到点就结束本轮回填、剩余记录留给
+下一轮；日志行会附上「（到点收工，剩余下轮继续）」。这一条与「调用次数上限」互为兜底：
+次数上限防递归膨胀，时间上限防成段拒绝。
 
 **拒绝要先重试、不要立刻切分。** 生产实测：供应商对同一批内容的拒绝是**偶发**的——
 20 条文本被拒后 2 秒，包含同样内容的 40 条文本请求就翻译成功了。所以 `_translate_texts()`

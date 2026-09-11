@@ -410,6 +410,35 @@ class TranslationTest(unittest.TestCase):
         )
         self.assertEqual(len(engine.translation_cache["entries"]), 4)
 
+    def test_a_pass_stops_at_its_wall_clock_budget(self):
+        """A provider that refuses for a stretch must not hold the run open.
+
+        Production symptom this pins: with a call budget alone, one pass still
+        spent 3m41s and ten calls (28 of 40 records landed) while the provider
+        refused request after request.
+        """
+        translator = PoisonTranslator(poison="poison")
+        config = dict(self.config, TRANSLATION={
+            "BATCH_SIZE": 8, "MAX_NEW_PER_RUN": 50, "MAX_PASS_SECONDS": 60})
+        items = self.make_items(4)
+        items[0]["title"] = "poison headline"
+        engine = DigestEngine(config, self.now, translator=translator)
+
+        ticks = {"value": 0.0}
+
+        def clock():
+            ticks["value"] += 50.0
+            return ticks["value"]
+
+        with mock.patch("trendradar.digest.engine.time.perf_counter", side_effect=clock):
+            engine.process(items, None, False)
+
+        self.assertTrue(engine._translation_pass_truncated, "the pass must give up")
+        self.assertEqual(
+            len(translator.calls), 1,
+            "the refused call is not repeated once the deadline has passed",
+        )
+
     def test_an_expired_refusal_is_retried(self):
         """A refusal is a deferral, not a verdict.
 
@@ -600,11 +629,11 @@ class TranslationPacingTest(unittest.TestCase):
     def test_yaml_limits_reach_the_engine(self):
         limits = _load_digest_config({"digest": {"translation": {
             "batch_size": 7, "max_new_per_run": 11, "max_retry_calls": 3,
-            "refusal_retry_hours": 4}}})["TRANSLATION"]
+            "refusal_retry_hours": 4, "max_pass_seconds": 30}}})["TRANSLATION"]
         self.assertEqual(
             limits,
             {"BATCH_SIZE": 7, "MAX_NEW_PER_RUN": 11, "MAX_RETRY_CALLS": 3,
-             "REFUSAL_RETRY_HOURS": 4},
+             "REFUSAL_RETRY_HOURS": 4, "MAX_PASS_SECONDS": 30},
         )
 
     def test_summary_allowance_reaches_the_engine(self):
@@ -624,7 +653,7 @@ class TranslationPacingTest(unittest.TestCase):
         self.assertEqual(
             limits,
             {"BATCH_SIZE": 40, "MAX_NEW_PER_RUN": 40, "MAX_RETRY_CALLS": 8,
-             "REFUSAL_RETRY_HOURS": 6},
+             "REFUSAL_RETRY_HOURS": 6, "MAX_PASS_SECONDS": 75},
         )
 
     def test_call_budget_follows_the_queue_not_the_pool(self):

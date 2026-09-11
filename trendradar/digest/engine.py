@@ -171,9 +171,11 @@ class DigestEngine:
         # Records the provider filtered during THIS run.  Splitting must not
         # re-queue them through a different pass in the same process.
         self._translation_refused: set = set()
-        # Per-pass API call budget, reset at the start of each translate pass,
-        # plus the AI-summary allowance for the current run.
+        # Per-pass API call budget and wall-clock deadline, reset at the start of
+        # each translate pass, plus the AI-summary allowance for the current run.
         self._translation_calls_left = 0
+        self._translation_deadline: Optional[float] = None
+        self._translation_pass_truncated = False
         self._ai_summary_calls_left = 0
 
     def process(
@@ -590,6 +592,12 @@ class DigestEngine:
 
         if self._translation_calls_left <= 0:
             return None
+        # Wall-clock guard: stop the pass instead of holding the run open while
+        # the provider refuses request after request.  Whatever is left is
+        # retried on the next crawl.
+        if self._translation_deadline and time.perf_counter() >= self._translation_deadline:
+            self._translation_pass_truncated = True
+            return None
         self._translation_calls_left -= 1
 
         try:
@@ -696,6 +704,11 @@ class DigestEngine:
         # Extra calls allowed on top of the queued batches, for splitting a
         # refused batch down to the offending story.
         retry_calls = max(2, int(settings.get("MAX_RETRY_CALLS", 8)))
+        # Wall-clock bound for one pass.  The provider refuses most requests for
+        # stretches at a time and each refused call costs 10-25s, so a call
+        # budget alone still let a pass run for 3m41s (10 calls) against a 900s
+        # service timeout.  Time is the quantity that must be bounded here.
+        max_pass_seconds = max(5, int(settings.get("MAX_PASS_SECONDS", 75)))
         # How long a recorded refusal is honoured before the story is retried.
         self._translation_refusal_window = timedelta(
             hours=max(1, int(settings.get("REFUSAL_RETRY_HOURS", 6)))
@@ -754,6 +767,8 @@ class DigestEngine:
         self._translation_calls_left = budget + max(2, min(4 * batch_size, retry_calls))
         calls_available = self._translation_calls_left
         started = time.perf_counter()
+        self._translation_deadline = started + max_pass_seconds
+        self._translation_pass_truncated = False
 
         translated_count = 0
         for offset in range(0, len(pending), batch_size):
@@ -804,10 +819,11 @@ class DigestEngine:
             # One line per pass.  This step used to be a silent gap of up to ten
             # minutes in the service log, which is what kept the pacing bug
             # invisible; keep the pass observable.
+            note = "（到点收工，剩余下轮继续）" if self._translation_pass_truncated else ""
             print(
                 f"[简报] 翻译回填: {translated_count}/{len(pending)} 条入库, "
                 f"{calls_available - self._translation_calls_left} 次调用, "
-                f"{time.perf_counter() - started:.1f}s"
+                f"{time.perf_counter() - started:.1f}s{note}"
             )
         return translated_count
 
