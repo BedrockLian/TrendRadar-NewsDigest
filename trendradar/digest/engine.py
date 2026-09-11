@@ -615,6 +615,12 @@ class DigestEngine:
                 key = str(record.get("content_hash") or "")
                 if not key:
                     continue
+                if not title_zh and not summary_zh:
+                    # Nothing usable came back for this record.  Do NOT cache the
+                    # failure: an empty entry would look like a completed
+                    # translation and the story would never be retried, leaving
+                    # it permanently in the source language.
+                    continue
                 entries[key] = {
                     "title_zh": title_zh,
                     "summary_zh": summary_zh,

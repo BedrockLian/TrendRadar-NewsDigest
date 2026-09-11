@@ -228,6 +228,32 @@ class TranslationTest(unittest.TestCase):
 
         self.assertEqual(engine.translation_cache["entries"], {})
 
+    def test_failed_translation_is_not_cached_as_empty(self):
+        """An empty cache entry would look like a finished translation.
+
+        The engine's parser falls back to the original text when the model
+        returns something unusable, so a record can come back with nothing
+        translated.  Caching that would permanently strand the story in the
+        source language, because the cache is what says "already handled".
+        """
+        translator = StubTranslator(prefix="")
+        engine = DigestEngine(self.config, self.now, translator=translator)
+        items = self.make_items(2)
+        engine.process(items, None, False)
+
+        # StubTranslator with an empty prefix echoes the input, so every record
+        # comes back untranslated.
+        self.assertEqual(engine.translation_cache["entries"], {})
+
+        # A working translator on the next run must still pick them up.
+        working = StubTranslator()
+        engine2 = DigestEngine(self.config, self.now, translator=working)
+        engine2.process(items, None, False)
+        snapshot = engine2.build_homepage_snapshot(items)
+        self.assertTrue(snapshot.all_news)
+        for article in snapshot.all_news:
+            self.assertTrue(article["title"].startswith("【译】"), article["title"])
+
     def test_already_translated_content_is_used_by_the_digest_too(self):
         translator = StubTranslator()
         engine = DigestEngine(self.config, self.now, translator=translator)
