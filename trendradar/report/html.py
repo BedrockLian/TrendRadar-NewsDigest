@@ -9,9 +9,17 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from trendradar.digest import HomepageSnapshot
-from trendradar.digest.engine import safe_http_url
 from trendradar.report.helpers import html_escape
 from trendradar.report.workspace_template import DOCUMENT as _DOCUMENT
+from trendradar.report.workspace_theme import (
+    HEAD_ASSETS,
+    SHELL_BEHAVIOR_SCRIPT,
+    SHELL_CSS,
+    THEME_BOOTSTRAP_SCRIPT,
+    THEME_CSS,
+    render_sidebar,
+)
+from trendradar.utils.url import safe_http_url
 
 
 _DEFAULT_SLOTS = [
@@ -60,6 +68,13 @@ def _safe_archive_url(url: str) -> str:
     if value.startswith("briefings/") and ".." not in value and "\\" not in value:
         return value
     return safe_http_url(value)
+
+
+def _briefing_html_url(url: str) -> str:
+    value = _safe_archive_url(url)
+    if value.startswith("briefings/") and value.casefold().endswith(".md"):
+        return value[:-3] + ".html"
+    return ""
 
 
 def _public_item(item: Dict[str, Any]) -> Dict[str, str]:
@@ -234,10 +249,13 @@ def _render_digest(
 </section>'''
 
     archive_url = _safe_archive_url(digest.archive_url)
+    reading_url = _briefing_html_url(archive_url)
     download = (
         f'<a id="digest-download" class="download-link" href="{html_escape(archive_url)}" download>下载 Markdown <span aria-hidden="true">↓</span></a>'
         if archive_url else ""
     )
+    title = html_escape(digest.period_name or "新闻简报")
+    title_html = f'<a href="{html_escape(reading_url)}">{title}</a>' if reading_url else title
     filters = [f'<button class="digest-filter" type="button" data-category="all" aria-pressed="true">全部 <span>{digest.article_count}</span></button>']
     rows = []
     index = 0
@@ -270,7 +288,7 @@ def _render_digest(
     created_date = _display_time(digest.created_at, "%Y-%m-%d")
     created_time = _display_time(digest.created_at, "%H:%M")
     return f'''<section class="digest-section" id="digest" aria-labelledby="digest-title">
-  <div class="edition-heading"><div><p class="section-kicker">{html_escape(created_date)} · 最新一期</p><h1 id="digest-title">{html_escape(digest.period_name or "新闻简报")}</h1></div>
+  <div class="edition-heading"><div><p class="section-kicker">{html_escape(created_date)} · 最新一期</p><h1 id="digest-title">{title_html}</h1></div>
   <div class="edition-actions"><p class="edition-ledger">{digest.article_count} 篇 · {digest.source_count} 个来源 · {html_escape(created_time)} 发布</p>{download}</div></div>
   <div class="digest-filters" aria-label="筛选本期分类">{"".join(filters)}</div>
   <div class="digest-table-head" aria-hidden="true"><span>#</span><span>状态</span><span>标题与摘要</span><span>来源</span><span>时间</span><span>分类</span></div>
@@ -364,11 +382,34 @@ def render_html_content(
     })
     summaries = _safe_json_data(prepared["summaries"])
     generated = _display_time(homepage_snapshot.generated_at if homepage_snapshot else now.isoformat(), "%Y-%m-%d %H:%M")
+    slots_html = _render_slots(homepage_snapshot)
+    sidebar_categories = _render_sidebar_categories(homepage_snapshot)
+    generated_date = generated.split(" ", 1)[0]
+    sidebar_extra = f'''      <section class="sidebar-section">
+        <h2>今日简报</h2>
+        <p class="sidebar-date">{html_escape(generated_date)}</p>
+        <div class="sidebar-editions">{slots_html}</div>
+      </section>
+      <section class="sidebar-section">
+        <h2>新闻分类</h2>
+        <div class="sidebar-categories">{sidebar_categories}</div>
+      </section>'''
     replacements = {
+        "__WORKSPACE_HEAD__": HEAD_ASSETS + "\n" + THEME_BOOTSTRAP_SCRIPT,
+        "__WORKSPACE_THEME_CSS__": THEME_CSS,
+        "__WORKSPACE_SHELL_CSS__": SHELL_CSS,
+        "__WORKSPACE_SHELL_SCRIPT__": SHELL_BEHAVIOR_SCRIPT,
+        "__WORKSPACE_SIDEBAR__": render_sidebar(
+            root_href="",
+            active="digest",
+            update_count=len(update_indices),
+            total_count=len(current_items),
+            extra_html=sidebar_extra,
+            hide_empty_updates=True,
+        ),
         "__ALERTS__": _render_alerts(homepage_snapshot),
-        "__SLOTS__": _render_slots(homepage_snapshot),
+        "__SLOTS__": slots_html,
         "__DIGEST__": _render_digest(homepage_snapshot, len(current_items)),
-        "__SIDEBAR_CATEGORIES__": _render_sidebar_categories(homepage_snapshot),
         "__AI_ANALYSIS__": _render_ai_analysis(ai_analysis),
         "__UPDATES_HIDDEN__": "" if update_indices else " hidden",
         "__UPDATE_COUNT__": str(len(update_indices)),
@@ -379,7 +420,7 @@ def render_html_content(
         "__SUMMARIES_FILENAME__": html_escape(SUMMARIES_FILENAME),
         "__SUMMARIES_DATA__": summaries,
         "__GENERATED_AT__": html_escape(generated),
-        "__GENERATED_DATE__": html_escape(generated.split(" ", 1)[0]),
+        "__GENERATED_DATE__": html_escape(generated_date),
     }
     document = _DOCUMENT
     for marker, value in replacements.items():

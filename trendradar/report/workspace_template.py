@@ -9,175 +9,10 @@ DOCUMENT = r'''<!doctype html>
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#071923">
   <title>热点新闻分析 · TrendRadar</title>
-  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/inter@5.2.8/index.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <script>
-    try {
-      var storedTheme = localStorage.getItem('trendradar-theme');
-      if (storedTheme === 'dark' || (!storedTheme && matchMedia('(prefers-color-scheme: dark)').matches)) {
-        document.documentElement.dataset.theme = 'dark';
-      }
-      var storedSidebar = localStorage.getItem('trendradar-sidebar-collapsed');
-      document.documentElement.dataset.sidebar = storedSidebar === 'true' ? 'collapsed' : 'expanded';
-    } catch (_) {
-      document.documentElement.dataset.sidebar = 'expanded';
-    }
-  </script>
+__WORKSPACE_HEAD__
   <style>
-    :root {
-      color-scheme: light;
-      --app-bg: #eef3f6;
-      --surface: #ffffff;
-      --surface-raised: #f7fafb;
-      --sidebar: #f8fafb;
-      --sidebar-active: #dff4f6;
-      --ink: #0c1c29;
-      --ink-strong: #07131e;
-      --muted: #64778a;
-      --faint: #91a0ad;
-      --rule: #d7e1e6;
-      --rule-strong: #bdcbd2;
-      --accent: #079aac;
-      --accent-bright: #16c7d3;
-      --accent-soft: #def5f6;
-      --signal: #e74658;
-      --signal-soft: #ffeaed;
-      --focus: #13b9c8;
-      --backdrop: rgba(4, 16, 24, .52);
-      --font-ui: "Inter Variable", Inter, "HarmonyOS Sans SC", MiSans, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-      --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-    }
-    :root[data-theme="dark"] {
-      color-scheme: dark;
-      --app-bg: #071923;
-      --surface: #0a1d27;
-      --surface-raised: #0d2430;
-      --sidebar: #081821;
-      --sidebar-active: #153746;
-      --ink: #e9f0f3;
-      --ink-strong: #ffffff;
-      --muted: #9eb0be;
-      --faint: #6f8492;
-      --rule: #29414d;
-      --rule-strong: #3b5866;
-      --accent: #43d6df;
-      --accent-bright: #5ce7ee;
-      --accent-soft: #123b46;
-      --signal: #ff5968;
-      --signal-soft: #472530;
-      --focus: #66e8ee;
-      --backdrop: rgba(0, 0, 0, .7);
-    }
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; scroll-padding-top: 84px; }
-    body {
-      margin: 0;
-      background: var(--app-bg);
-      color: var(--ink);
-      font-family: var(--font-ui);
-      font-size: 15px;
-      line-height: 1.5;
-      text-rendering: optimizeLegibility;
-      -webkit-font-smoothing: antialiased;
-    }
-    button, input, select { font: inherit; }
-    button, select { cursor: pointer; }
-    a { color: inherit; }
-    a:hover { color: var(--accent); }
-    :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
-    [hidden] { display: none !important; }
-    .sr-only {
-      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
-    }
-
-    .app-frame {
-      display: grid;
-      grid-template-columns: 240px minmax(0, 1fr);
-      min-height: 100vh;
-      transition: grid-template-columns .22s ease;
-    }
-    .sidebar {
-      position: sticky;
-      top: 0;
-      z-index: 50;
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      height: 100vh;
-      overflow: hidden auto;
-      background: var(--sidebar);
-      border-right: 1px solid var(--rule);
-      transition: transform .22s ease, visibility .22s ease;
-    }
-    .sidebar-head {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      min-height: 72px;
-      padding: 14px 14px 14px 18px;
-      border-bottom: 1px solid var(--rule);
-    }
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      min-width: 0;
-      color: var(--ink-strong);
-      font-size: 1.18rem;
-      font-weight: 730;
-      letter-spacing: -.02em;
-      text-decoration: none;
-    }
-    .brand i { color: var(--accent); font-size: 1.35rem; }
-    .sidebar-toggle, .top-icon-button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 38px;
-      height: 38px;
-      flex: 0 0 auto;
-      border: 1px solid var(--rule);
-      border-radius: 5px;
-      background: transparent;
-      color: var(--muted);
-    }
-    .sidebar-toggle { margin-left: auto; }
-    .sidebar-toggle:hover, .top-icon-button:hover { color: var(--ink); background: var(--surface-raised); }
-
-    .sidebar-nav { display: grid; gap: 4px; padding: 14px 10px; }
-    .sidebar-nav a {
-      display: grid;
-      grid-template-columns: 22px minmax(0, 1fr) auto;
-      align-items: center;
-      gap: 10px;
-      min-height: 42px;
-      padding: 0 12px;
-      border-left: 3px solid transparent;
-      border-radius: 5px;
-      color: var(--muted);
-      font-weight: 570;
-      text-decoration: none;
-    }
-    .sidebar-nav a:hover { color: var(--ink); background: var(--surface-raised); }
-    .sidebar-nav a[aria-current="page"] {
-      color: var(--ink-strong);
-      background: var(--sidebar-active);
-      border-left-color: var(--accent);
-    }
-    .sidebar-nav i { font-size: 1rem; }
-    .nav-count { color: var(--faint); font-size: .78rem; font-weight: 520; }
-
-    .sidebar-section { padding: 16px 18px; border-top: 1px solid var(--rule); }
-    .sidebar-section h2 {
-      margin: 0 0 12px;
-      color: var(--muted);
-      font-size: .72rem;
-      font-weight: 680;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-    }
+__WORKSPACE_THEME_CSS__
+__WORKSPACE_SHELL_CSS__
     .sidebar-date { margin: -5px 0 10px 28px; color: var(--faint); font-size: .76rem; }
     .sidebar-editions .edition-rail {
       width: 100%;
@@ -220,35 +55,6 @@ DOCUMENT = r'''<!doctype html>
     .sidebar-category strong { color: var(--faint); font-size: .76rem; font-weight: 550; }
     .sidebar-category:disabled { opacity: .42; cursor: default; }
     .sidebar-empty { color: var(--faint); font-size: .8rem; }
-    .sidebar-footer { margin-top: auto; padding: 14px 18px; border-top: 1px solid var(--rule); }
-    .sidebar-theme {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      width: 100%;
-      padding: 9px 10px;
-      border: 0;
-      border-radius: 4px;
-      background: transparent;
-      color: var(--muted);
-      text-align: left;
-    }
-    .sidebar-theme:hover { color: var(--ink); background: var(--surface-raised); }
-
-    .app-page { min-width: 0; }
-    .topbar {
-      position: sticky;
-      top: 0;
-      z-index: 40;
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      min-height: 72px;
-      padding: 12px 24px;
-      background: var(--surface);
-      border-bottom: 1px solid var(--rule);
-    }
-    .sidebar-expand { display: none; }
     .command-search {
       display: flex;
       align-items: center;
@@ -281,17 +87,6 @@ DOCUMENT = r'''<!doctype html>
       font: .72rem var(--font-mono);
       text-align: center;
     }
-    .topbar-meta {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-left: auto;
-      color: var(--muted);
-      font-size: .78rem;
-      white-space: nowrap;
-    }
-    .top-theme-label { display: none; }
-
     .top-editions { display: none; background: var(--surface); border-bottom: 1px solid var(--rule); }
     .edition-rail {
       display: grid;
@@ -395,6 +190,8 @@ DOCUMENT = r'''<!doctype html>
     h1 { font-size: clamp(2rem, 3.25vw, 3.25rem); line-height: 1.08; }
     .section-heading h2 { font-size: 1.65rem; line-height: 1.15; }
     .edition-actions { display: grid; justify-items: end; gap: 10px; }
+    .edition-heading h1 a { color: inherit; text-decoration: none; }
+    .edition-heading h1 a:hover { color: var(--accent); }
     .edition-ledger, .updates-intro, .all-news-ledger {
       margin: 0;
       color: var(--muted);
@@ -602,45 +399,16 @@ DOCUMENT = r'''<!doctype html>
       font-size: .7rem;
     }
 
-    html[data-sidebar="collapsed"] .app-frame { grid-template-columns: 0 minmax(0, 1fr); }
-    html[data-sidebar="collapsed"] .sidebar { transform: translateX(-100%); visibility: hidden; }
-    html[data-sidebar="collapsed"] .sidebar-expand { display: inline-flex; }
     html[data-sidebar="collapsed"] .top-editions { display: block; }
 
-    .sidebar-scrim {
-      position: fixed;
-      inset: 0;
-      z-index: 45;
-      display: none;
-      border: 0;
-      background: var(--backdrop);
-    }
-
     @media (max-width: 1180px) {
-      .app-frame { grid-template-columns: 220px minmax(0, 1fr); }
       .workspace { grid-template-columns: minmax(0, 1fr) 320px; }
       .digest-table-head, .digest-row { grid-template-columns: 32px 52px minmax(220px, 1fr) 90px 82px; }
       .digest-table-head > :last-child, .digest-category { display: none; }
       .news-controls { grid-template-columns: minmax(200px, 2fr) repeat(3, minmax(110px, 1fr)); }
     }
     @media (max-width: 960px) {
-      html { scroll-padding-top: 76px; }
-      .app-frame, html[data-sidebar="collapsed"] .app-frame { grid-template-columns: minmax(0, 1fr); }
-      .sidebar, html[data-sidebar="collapsed"] .sidebar {
-        position: fixed;
-        left: 0;
-        top: 0;
-        width: min(300px, calc(100vw - 56px));
-        transform: translateX(-102%);
-        visibility: hidden;
-        box-shadow: 18px 0 60px rgba(0, 0, 0, .22);
-      }
-      html[data-drawer="open"] .sidebar { transform: translateX(0); visibility: visible; }
-      html[data-drawer="open"] .sidebar-scrim { display: block; }
-      .sidebar-expand, html[data-sidebar="collapsed"] .sidebar-expand { display: inline-flex; }
       .top-editions, html[data-sidebar="expanded"] .top-editions { display: block; }
-      .topbar { min-height: 64px; padding: 10px 16px; }
-      .topbar-meta time { display: none; }
       .workspace { grid-template-columns: minmax(0, 1fr); }
       .updates-pane {
         position: static;
@@ -653,9 +421,6 @@ DOCUMENT = r'''<!doctype html>
       .control-search { grid-column: 1 / -1; }
     }
     @media (max-width: 720px) {
-      .topbar { gap: 10px; }
-      .top-icon-button { width: 38px; height: 38px; }
-      .topbar-meta { gap: 4px; }
       .command-key { display: none; }
       .edition-rail { padding: 18px 16px 16px; }
       .slot { display: grid; gap: 2px; }
@@ -696,10 +461,6 @@ DOCUMENT = r'''<!doctype html>
       .control-search { grid-column: auto; }
       .site-footer { display: grid; }
     }
-    @media (prefers-reduced-motion: reduce) {
-      html { scroll-behavior: auto; }
-      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
-    }
     @media print {
       .sidebar, .topbar, .top-editions, .alert-strip, .updates-pane, #all-news, .site-footer, .digest-filters { display: none !important; }
       .app-frame { display: block; }
@@ -711,32 +472,7 @@ DOCUMENT = r'''<!doctype html>
 <body>
   <button class="sidebar-scrim" id="sidebar-scrim" type="button" aria-label="关闭导航"></button>
   <div class="app-frame">
-    <aside class="sidebar" id="app-sidebar" aria-label="主导航">
-      <div class="sidebar-head">
-        <a class="brand" href="#digest"><i class="bi bi-bullseye" aria-hidden="true"></i><span>TrendRadar</span></a>
-        <button class="sidebar-toggle" type="button" data-sidebar-toggle aria-controls="app-sidebar" aria-expanded="true" aria-label="收起导航" title="收起导航">
-          <i class="bi bi-layout-sidebar-inset" aria-hidden="true"></i>
-        </button>
-      </div>
-      <nav class="sidebar-nav">
-        <a href="#digest" aria-current="page"><i class="bi bi-layout-text-window" aria-hidden="true"></i><span>最新一期</span></a>
-        <a id="updates-nav" href="#updates"__UPDATES_HIDDEN__><i class="bi bi-bell" aria-hidden="true"></i><span>简报后更新</span><strong class="nav-count">__UPDATE_COUNT__</strong></a>
-        <a href="#all-news"><i class="bi bi-list-task" aria-hidden="true"></i><span>全部新闻</span><strong class="nav-count">__TOTAL_COUNT__</strong></a>
-        <a href="briefings/"><i class="bi bi-archive" aria-hidden="true"></i><span>简报存档</span></a>
-      </nav>
-      <section class="sidebar-section">
-        <h2>今日简报</h2>
-        <p class="sidebar-date">__GENERATED_DATE__</p>
-        <div class="sidebar-editions">__SLOTS__</div>
-      </section>
-      <section class="sidebar-section">
-        <h2>新闻分类</h2>
-        <div class="sidebar-categories">__SIDEBAR_CATEGORIES__</div>
-      </section>
-      <div class="sidebar-footer">
-        <button class="sidebar-theme" type="button" data-theme-toggle><i class="bi bi-moon" aria-hidden="true"></i><span>深色模式</span></button>
-      </div>
-    </aside>
+__WORKSPACE_SIDEBAR__
 
     <div class="app-page">
       <header class="topbar">
@@ -795,10 +531,10 @@ DOCUMENT = r'''<!doctype html>
 
   <script id="homepage-data" type="application/json">__HOMEPAGE_DATA__</script>
   <script id="summaries-data" type="application/json">__SUMMARIES_DATA__</script>
+__WORKSPACE_SHELL_SCRIPT__
   <script>
     (function () {
       'use strict';
-      var root = document.documentElement;
       var dataNode = document.getElementById('homepage-data');
       var data = { updates: [], allNews: [], categories: [], sources: [] };
       try { data = JSON.parse(dataNode.textContent || '{}'); } catch (_) {}
@@ -848,7 +584,6 @@ DOCUMENT = r'''<!doctype html>
 
       var PAGE_SIZE = 40;
       var FILTER_KEY = 'trendradar-filters-v1';
-      var SIDEBAR_KEY = 'trendradar-sidebar-collapsed';
       var shown = PAGE_SIZE;
       var search = document.getElementById('news-search');
       var headerSearch = document.getElementById('header-search');
@@ -859,7 +594,6 @@ DOCUMENT = r'''<!doctype html>
       var count = document.getElementById('results-count');
       var loadMore = document.getElementById('load-more');
       var empty = document.getElementById('all-news-empty');
-      var mobileSidebar = matchMedia('(max-width: 960px)');
 
       function safeUrl(value) {
         try {
@@ -1050,60 +784,9 @@ DOCUMENT = r'''<!doctype html>
           var digestEmpty = document.getElementById('digest-filter-empty');
           if (digestEmpty) digestEmpty.hidden = visible !== 0;
           document.getElementById('digest').scrollIntoView();
-          if (mobileSidebar.matches) closeDrawer();
         });
       });
 
-      function syncTheme() {
-        var dark = root.dataset.theme === 'dark';
-        document.querySelectorAll('[data-theme-toggle]').forEach(function (button) {
-          button.setAttribute('aria-label', dark ? '切换到浅色模式' : '切换到深色模式');
-          button.setAttribute('title', dark ? '切换到浅色模式' : '切换到深色模式');
-          var icon = button.querySelector('i');
-          if (icon) icon.className = dark ? 'bi bi-sun' : 'bi bi-moon';
-          var label = button.querySelector('span');
-          if (label) label.textContent = dark ? '浅色模式' : '深色模式';
-          var shortLabel = button.querySelector('.top-theme-label');
-          if (shortLabel) shortLabel.textContent = dark ? '浅色' : '深色';
-        });
-      }
-      document.querySelectorAll('[data-theme-toggle]').forEach(function (button) {
-        button.addEventListener('click', function () {
-          var dark = root.dataset.theme === 'dark';
-          root.dataset.theme = dark ? 'light' : 'dark';
-          try { localStorage.setItem('trendradar-theme', dark ? 'light' : 'dark'); } catch (_) {}
-          syncTheme();
-        });
-      });
-
-      function closeDrawer() {
-        root.dataset.drawer = 'closed';
-        syncSidebarButtons();
-      }
-      function syncSidebarButtons() {
-        var open = mobileSidebar.matches ? root.dataset.drawer === 'open' : root.dataset.sidebar !== 'collapsed';
-        document.querySelectorAll('[data-sidebar-toggle]').forEach(function (button) {
-          button.setAttribute('aria-expanded', String(open));
-          button.setAttribute('aria-label', open ? '收起导航' : '展开导航');
-          button.setAttribute('title', open ? '收起导航' : '展开导航');
-        });
-      }
-      function toggleSidebar() {
-        if (mobileSidebar.matches) {
-          root.dataset.drawer = root.dataset.drawer === 'open' ? 'closed' : 'open';
-        } else {
-          var collapsed = root.dataset.sidebar !== 'collapsed';
-          root.dataset.sidebar = collapsed ? 'collapsed' : 'expanded';
-          try { localStorage.setItem(SIDEBAR_KEY, String(collapsed)); } catch (_) {}
-        }
-        syncSidebarButtons();
-      }
-      document.querySelectorAll('[data-sidebar-toggle]').forEach(function (button) { button.addEventListener('click', toggleSidebar); });
-      document.getElementById('sidebar-scrim').addEventListener('click', closeDrawer);
-      document.addEventListener('keydown', function (event) { if (event.key === 'Escape') closeDrawer(); });
-      document.querySelectorAll('.sidebar-nav a').forEach(function (link) {
-        link.addEventListener('click', function () { if (mobileSidebar.matches) closeDrawer(); });
-      });
       function syncNav() {
         var hash = location.hash || '#digest';
         document.querySelectorAll('.sidebar-nav a[href^="#"]').forEach(function (link) {
@@ -1112,13 +795,9 @@ DOCUMENT = r'''<!doctype html>
         });
       }
       window.addEventListener('hashchange', syncNav);
-      if (mobileSidebar.addEventListener) mobileSidebar.addEventListener('change', function () { closeDrawer(); });
 
-      root.dataset.drawer = 'closed';
       renderUpdates();
       renderAll();
-      syncTheme();
-      syncSidebarButtons();
       syncNav();
 
       // First paint is already done. Pull the authoritative summary array and

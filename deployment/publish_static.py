@@ -142,7 +142,7 @@ def _replace_directory(staged: Path, live: Path, backup: Path) -> None:
 
 
 def publish_static(output_dir: Path, public_dir: Path) -> Path:
-    """Publish the homepage and a Markdown-only briefing archive.
+    """Publish the homepage plus Markdown briefings and derived HTML readers.
 
     Runtime databases, alert state, crawl snapshots, and other internal files stay
     in ``output_dir`` and are never copied into the served directory.

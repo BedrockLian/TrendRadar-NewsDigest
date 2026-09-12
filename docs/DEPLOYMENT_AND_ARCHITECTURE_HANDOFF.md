@@ -231,8 +231,10 @@ Docker 部署另有其路径：`http.server` 在容器内提供 `/app/public`（
 | `trendradar/core/scheduler.py` | 解析三时段配置，计算 08:00/12:30/20:00 状态和下一次推送 |
 | `trendradar/digest/engine.py` | 观察文章、去重、分类、选稿、突发判断、简报状态、Markdown 存档和公开快照；持有翻译缓存并做投影本地化 |
 | `trendradar/report/html.py` | 首页 HTML 拼装；服务端渲染简报，构建精简载荷与摘要旁车文件 |
-| `trendradar/report/workspace_template.py` | 首页 HTML/CSS/JS 模板本体（占位符由 `html.py` 替换） |
-| `trendradar/report/archive.py` | 扫描 Markdown，生成 `briefings/index.html` 归档页；主程序与发布器共用 |
+| `trendradar/report/workspace_template.py` | 首页特有的信息架构、内容样式和筛选脚本；共享外壳由 `workspace_theme.py` 注入 |
+| `trendradar/report/workspace_theme.py` | 公开页面唯一的主题令牌、应用外壳、侧栏、顶部栏和深浅主题/抽屉行为来源 |
+| `trendradar/report/archive.py` | 扫描 Markdown，生成统一存档索引及安全 HTML 阅读页；主程序与发布器共用 |
+| `trendradar/utils/url.py` | URL 规范化与公开 HTTP/HTTPS 外链校验；Digest、首页和详情解析共用 |
 | `deployment/run_once.py` | 用整轮运行锁串行化“采集 → 生成 → 发布” |
 | `deployment/publish_static.py` | 构建公开文件白名单、生成归档索引、写出 gzip 边车、整体切换公开目录 |
 | `deployment/compress.py` | 为公开目录中的文本资产生成确定性 `.gz` 边车（发布时一次） |
@@ -383,7 +385,8 @@ public/
 ├── briefings-summaries.json      ← 按文件名精确放行，可选
 └── briefings/
     ├── index.html                ← 发布器生成
-    └── **/*.md
+    ├── **/*.html                 ← 发布器由受控 Markdown 生成的阅读页
+    └── **/*.md                   ← 原始简报下载
 ```
 
 除这些源文件外，发布器还会为每个文本资产生成确定性的 `<name>.gz` 边车，因此实际发布结果形如：
@@ -397,7 +400,8 @@ public/
 └── briefings/
     ├── index.html
     ├── index.html.gz
-    └── **/*.md  +  **/*.md.gz
+    ├── **/*.html  +  **/*.html.gz
+    └── **/*.md    +  **/*.md.gz
 ```
 
 `.gz` 是**已公开内容**的派生表示，不是新的信息面；发布器的**源白名单**没有放宽，所以
@@ -637,7 +641,7 @@ sudo systemctl start trendradar-collect.service
 ```powershell
 $env:PYTHONIOENCODING = 'utf-8'
 uv run --frozen python -m unittest discover -s tests -p 'test_*.py'
-uv run --frozen python -m py_compile deployment/compress.py deployment/serve_public.py deployment/publish_static.py deployment/run_once.py docker/manage.py trendradar/__main__.py trendradar/context.py trendradar/core/scheduler.py trendradar/digest/engine.py trendradar/report/archive.py trendradar/report/generator.py trendradar/report/html.py trendradar/report/workspace_template.py
+uv run --frozen python -m py_compile deployment/compress.py deployment/serve_public.py deployment/publish_static.py deployment/run_once.py docker/manage.py trendradar/__main__.py trendradar/context.py trendradar/core/scheduler.py trendradar/digest/engine.py trendradar/report/archive.py trendradar/report/generator.py trendradar/report/html.py trendradar/report/workspace_template.py trendradar/report/workspace_theme.py
 git diff --check
 ```
 
@@ -647,7 +651,7 @@ Shell 语法可用 Git for Windows 验证：
 & 'C:\Program Files\Git\usr\bin\sh.exe' -n deployment/run.sh docker/entrypoint.sh
 ```
 
-以上命令与服务器 `ops/precheck.sh` 等价（后者还会验证发布白名单、`serve_public` 与 `RENAME_EXCHANGE`）；`unittest discover` 当前为 **112** 个用例。
+以上命令与服务器 `ops/precheck.sh` 等价（后者还会验证发布白名单、`serve_public` 与 `RENAME_EXCHANGE`）；`unittest discover` 当前为 **113** 个用例。
 
 ### 9.2 公共目录安全验证
 
@@ -657,6 +661,7 @@ Shell 语法可用 Git for Windows 验证：
 index.html
 briefings-summaries.json
 briefings/index.html
+briefings/**/*.html
 briefings/**/*.md
 ```
 
@@ -669,6 +674,7 @@ briefings/**/*.md
 ```text
 GET /                                  200
 GET /briefings/                        200
+GET /briefings/<实际简报>.html         200
 GET /briefings/<实际简报>.md           200
 GET /briefings-summaries.json          200
 GET /briefings/.state.json             404

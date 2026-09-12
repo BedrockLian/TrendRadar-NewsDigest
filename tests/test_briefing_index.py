@@ -53,7 +53,7 @@ class BriefingIndexTest(unittest.TestCase):
         self.assertEqual(by_kind["alert"].generated_time, "10:25")
         self.assertEqual(by_kind["alert"].article_count, 2)
 
-    def test_builds_grouped_filterable_safe_dependency_free_html(self):
+    def test_builds_grouped_filterable_safe_workspace_html(self):
         self.write(
             "2026-09/2026-09-10-1230-noon_digest.md",
             "# <script>alert('title')</script> 午间新闻简报\n\n"
@@ -72,20 +72,29 @@ class BriefingIndexTest(unittest.TestCase):
 
         self.assertIn("2026年9月10日 · 周四", document)
         self.assertEqual(document.count('class="date-group"'), 1)
-        self.assertIn('data-filter="digest"', document)
-        self.assertIn('data-filter="weekly"', document)
-        self.assertIn('data-filter="alert"', document)
+        self.assertIn('data-archive-filter="digest"', document)
+        self.assertIn('data-archive-filter="weekly"', document)
+        self.assertIn('data-archive-filter="alert"', document)
         self.assertIn('data-archive-kind="digest"', document)
-        self.assertIn("阅读 Markdown", document)
+        self.assertIn("下载 Markdown", document)
         self.assertIn("localStorage.setItem('trendradar-theme'", document)
         self.assertIn("prefers-reduced-motion", document)
-        self.assertIn('class="brand" href="../"', document)
-        self.assertIn('class="home-link" href="../"', document)
+        self.assertIn('id="app-sidebar"', document)
+        self.assertIn('href="2026-09/2026-09-10-1230-noon_digest.html"', document)
+        self.assertIn('href="2026-09/2026-09-10-1230-noon_digest.md" download', document)
         self.assertNotIn('href="/"', document)
         self.assertNotIn("<script>alert('title')</script>", document)
         self.assertIn("&lt;script&gt;alert(&#x27;title&#x27;)&lt;/script&gt;", document)
         self.assertNotIn("html2canvas", document)
-        self.assertNotIn("https://cdn", document)
+        self.assertIn("bootstrap-icons", document)
+
+        detail = self.root / "2026-09/2026-09-10-1230-noon_digest.html"
+        self.assertTrue(detail.is_file())
+        detail_document = detail.read_text(encoding="utf-8")
+        self.assertIn("返回简报存档", detail_document)
+        self.assertIn('href="2026-09-10-1230-noon_digest.md" download', detail_document)
+        self.assertIn('href="https://example.com"', detail_document)
+        self.assertNotIn("<script>alert('title')</script>", detail_document)
 
     def test_escapes_malicious_filename_in_markdown_links(self):
         self.write(
@@ -103,9 +112,51 @@ class BriefingIndexTest(unittest.TestCase):
 
         self.assertIn("暂无简报。首期生成后会出现在这里。", document)
         self.assertIn(
-            'data-filter="all" aria-pressed="true">全部<span class="filter-count">0',
+            'data-archive-filter="all" aria-pressed="true">全部<span>0',
             document,
         )
+
+    def test_detail_pages_cover_digest_weekly_alert_and_escape_untrusted_content(self):
+        self.write(
+            "2026-09/2026-09-10-0800-morning_digest.md",
+            "# 2026-09-10 早间新闻简报\n\n"
+            "> 生成时间：2026-09-10 08:00｜共 2 篇\n\n"
+            "## 科技与 AI（2）\n\n"
+            "1. [安全新闻](https://example.com/a) **[更新]**\n"
+            "   - 来源：可信来源\n"
+            "   - 简介：正常摘要\n\n"
+            "2. [<script>alert(1)</script>](javascript:alert(1))\n",
+        )
+        self.write(
+            "weekly/2026-W37.md",
+            "# 2026-W37 新闻趋势周报\n\n"
+            "> 覆盖最近 7 天简报，共 1 篇。\n\n"
+            "## 板块趋势\n\n### 科技与 AI（1）\n\n"
+            "- [周报新闻](https://example.com/week)\n",
+        )
+        self.write(
+            "alerts/2026-09-11.md",
+            "# 2026-09-11 突发与重要更新\n\n"
+            "## 09:10 突发提醒\n\n"
+            "- [突发新闻](https://example.com/alert)（快讯源）\n"
+            "  - 突发摘要\n",
+        )
+
+        build_index(self.root)
+
+        digest = (self.root / "2026-09/2026-09-10-0800-morning_digest.html").read_text(encoding="utf-8")
+        weekly = (self.root / "weekly/2026-W37.html").read_text(encoding="utf-8")
+        alert = (self.root / "alerts/2026-09-11.html").read_text(encoding="utf-8")
+        self.assertIn("正常摘要", digest)
+        self.assertIn("可信来源", digest)
+        self.assertIn("detail-status-signal", digest)
+        self.assertIn("周报新闻", weekly)
+        self.assertIn("突发摘要", alert)
+        self.assertIn("快讯源", alert)
+        self.assertNotIn("javascript:alert", digest)
+        self.assertNotIn("<script>alert(1)</script>", digest)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", digest)
+        self.assertIn('href="../../#digest"', digest)
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ class PublishStaticTest(unittest.TestCase):
         path.write_text(content, encoding="utf-8")
         return path
 
-    def test_publishes_homepage_and_markdown_only_archive(self):
+    def test_publishes_homepage_and_generated_archive_reading_pages(self):
         self.write("index.html", "<!doctype html><title>Today</title>")
         self.write(
             "briefings/2026-09/2026-09-10-0800-morning_digest.md",
@@ -47,6 +47,9 @@ class PublishStaticTest(unittest.TestCase):
         self.assertTrue(
             (archive / "2026-09/2026-09-10-0800-morning_digest.md").is_file()
         )
+        detail = archive / "2026-09/2026-09-10-0800-morning_digest.html"
+        self.assertTrue(detail.is_file())
+        self.assertIn("下载 Markdown", detail.read_text(encoding="utf-8"))
         self.assertFalse((archive / ".state.json").exists())
         self.assertFalse((archive / "raw.db").exists())
         self.assertFalse((self.public / "rss").exists())

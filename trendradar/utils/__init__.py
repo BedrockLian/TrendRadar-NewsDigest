@@ -10,7 +10,7 @@ from trendradar.utils.time import (
     get_current_time_display,
     convert_time_for_display,
 )
-from trendradar.utils.url import normalize_url
+from trendradar.utils.url import normalize_url, safe_http_url
 
 __all__ = [
     "get_configured_time",
@@ -19,4 +19,5 @@ __all__ = [
     "get_current_time_display",
     "convert_time_for_display",
     "normalize_url",
+    "safe_http_url",
 ]

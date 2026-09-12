@@ -6,7 +6,7 @@ URL 处理工具模块
 - normalize_url: 标准化 URL，去除动态参数
 """
 
-from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+from urllib.parse import parse_qs, urlencode, urlparse, urlsplit, urlunparse
 from typing import Dict, Set
 
 
@@ -33,6 +33,18 @@ COMMON_TRACKING_PARAMS: Set[str] = {
     # 分享相关
     "share_token", "share_id", "share_from",
 }
+
+
+def safe_http_url(url: str) -> str:
+    """Return a public HTTP(S) URL, rejecting executable or malformed schemes."""
+
+    try:
+        parts = urlsplit((url or "").strip())
+    except (TypeError, ValueError):
+        return ""
+    if parts.scheme.casefold() not in {"http", "https"} or not parts.netloc:
+        return ""
+    return parts.geturl()
 
 
 def normalize_url(url: str, platform_id: str = "") -> str:

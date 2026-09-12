@@ -118,6 +118,9 @@ class PublishCompressionTest(unittest.TestCase):
         self.assertTrue((self.public / "index.html.gz").is_file())
         self.assertTrue((self.public / "briefings/index.html.gz").is_file())
         self.assertTrue(
+            (self.public / "briefings/2026-09/2026-09-11-0801-morning_digest.html.gz").is_file()
+        )
+        self.assertTrue(
             (self.public / "briefings/2026-09/2026-09-11-0801-morning_digest.md.gz").is_file()
         )
         # The whitelist of sources is unchanged: private state is still excluded,

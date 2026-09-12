@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from trendradar.utils.url import safe_http_url
+
 
 TRACKING_QUERY_KEYS = {
     "fbclid", "gclid", "dclid", "msclkid", "mc_cid", "mc_eid", "_hsenc",
@@ -90,17 +92,6 @@ def canonical_url(url: str) -> str:
         )
     except ValueError:
         return url.strip()
-
-
-def safe_http_url(url: str) -> str:
-    """Return a public HTTP(S) URL, rejecting executable or malformed schemes."""
-    try:
-        parts = urlsplit((url or "").strip())
-    except ValueError:
-        return ""
-    if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
-        return ""
-    return url.strip()
 
 
 def normalize_title(title: str) -> str:
