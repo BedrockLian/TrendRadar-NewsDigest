@@ -767,6 +767,20 @@ Docker CLI 在当前 Windows 开发机不可用，因此本地没有执行完整
 - 回滚：`git revert c9df505eb7ffbd40148bd757c2fd085a7143081f` 后重新生成 archive 并发布（上一版为 `bc69ac1c847f99739e2b9db9c7c7c63cc9912d80`，本机源码备份 `/opt/trendradar-src-backup-20260912-221518`）；
 - 未验证：访客侧的实际取字结果。本机与服务器的 curl 均 200，带 `Origin` 时主源回显 `access-control-allow-origin`、备源为 `*`，但 npmmirror 是 npm 注册表镜像、没有 SLA；要兜底就把这 7 个 woff2 放进自有对象存储再调整 `src` 顺序。
 
+### 10.4 2026-09-12 第三次发布（首页信息架构整站上线）
+
+- commit `f3865255`（代码；本节记录写在紧随其后的一个纯文档提交里），只改 `trendradar/report/` 三处与 `trendradar/digest/engine.py` 一处；
+- 首页换成定稿原型的**工作台**信息架构：KPI 行 / 采集节律条 / 近 7 日入库量折线 / 本轮新增与更新动态 / 最新一期简报按板块分组的阅读流 / 简报后更新队列 / 全部新闻台账（搜索、板块与状态筛选、三种排序、每次 40 条、逐行已读、多源同题 `×N`、未来时间标 `?`）/ Markdown 导出，详见 §3.3；
+- `trendradar/report/workspace_theme.py` 的六支令牌换成 tech-utility 方向的 oklch 原值（浅色与深色各一套，派生色一律 `oklch()`），仪表盘、简报存档、简报详情三处共用它，所以一次改动覆盖全部公开 HTML 页面；强调色只留在图表线与端点、主按钮；
+- 简报节改为「板块分组 + 配额/入选」：配额随 section 从引擎下发（`engine.py::_public_digest` 的 `quota`），本轮零候选的板块在列表末尾用一行说明；
+- **修掉一个线上错误**：首页载荷的 `_ci` 按「首次出现顺序」编号，而下发给浏览器的 `categories` 按「简报板块顺序」重排，两者错位，导致台账每一行的板块名指向别的板块（实测 NHK 政治条目显示为「游戏」）。现在重排后重新映射 `_ci`，并加了回归用例（`test_category_indices_survive_the_option_list_reorder`）。生产复核 917 条可核对条目、0 处错位；
+- 控件边框对比度从 1.69:1 提到 3.11:1（`--line-strong`，两个主题各算一次）；简报存档的按下态筛选按钮此前是深色叠深色，一并修正；调色板审计脚本见设计工作区的 `check-contrast.py`（24 对逐项 PASS）；
+- `workspace_template.py` 现在由设计工作区的 `build-production-ia.py` 从定稿原型生成，**不要手改**；
+- 部署前：全量用例 **123** 通过（本地与生产 venv 各一次）、`py_compile` 通过、`precheck.sh` 输出 `PRECHECK: PASS`；archive 两端 sha256 一致（`1e0a903a438ef28df5c625ead989b20de889219aa9e91aa76f919be0429c988b`）；
+- 部署后：23:30 那轮采集（`23:30:00 → 23:33:35`，`Result=success`，翻译 40/40、8.6s）重新生成了首页；线上 50 项检查全过 —— 18 个新 IA 区域、载荷四个新鲜度字段、917 条板块名与来源配置零错位、7 个拉丁字重且零 Inter、零 serif、私有路径四条 404、gzip 与 `text/html` 正常、简报存档与详情继承同一套令牌；
+- 回滚：`git revert f3865255` 后等下一轮采集重新生成首页（上一版为 `8bfa70f8`，本机源码备份 `/opt/trendradar-src-backup-20260912-231953`）；
+- 未验证：**手机断点只做了静态核对**（≤1080 / ≤980 / ≤720 三档规则逐条读过，未做窄视口渲染；渲染器视口固定 1080 CSS px，无法用它验窄屏）；深色主题同样只核对了令牌与对比度数值，未截图。若要真机确认，用手机打开站点即可。
+
 ## 11. 故障定位
 
 ### 首页仍是旧版
