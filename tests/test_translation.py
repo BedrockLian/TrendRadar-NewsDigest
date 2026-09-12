@@ -45,6 +45,14 @@ class StubTranslator:
         return StubBatch([StubTranslation(f"{self.prefix}{text}") for text in texts])
 
 
+class ChineseTranslator(StubTranslator):
+    """Returns target-language text without preserving Japanese kana."""
+
+    def translate_batch(self, texts):
+        self.calls.append(list(texts))
+        return StubBatch([StubTranslation(f"中文译文{i}") for i, _ in enumerate(texts)])
+
+
 class FailOnceTranslator(StubTranslator):
     def __init__(self):
         super().__init__()
@@ -253,6 +261,66 @@ class TranslationTest(unittest.TestCase):
         # The decision is cached by content hash; the record itself stays lean.
         entry = engine.translation_cache["entries"][article["content_hash"]]
         self.assertEqual(entry["title_zh"], "国产芯片取得突破")
+
+    def test_japanese_with_kanji_still_needs_translation(self):
+        engine = DigestEngine(self.config, self.now)
+
+        self.assertTrue(
+            engine._needs_translation("イコールアースの北方領土表記を日本が修正要求")
+        )
+        self.assertTrue(engine._needs_translation("한국 대통령 외교 일정"))
+        self.assertFalse(engine._needs_translation("中国外交政策最新进展"))
+        self.assertFalse(
+            engine._needs_translation("日本要求修正“イコールアース”地图中的北方领土标注")
+        )
+
+    def test_non_chinese_cache_entry_is_retranslated(self):
+        translator = ChineseTranslator()
+        engine = DigestEngine(self.config, self.now, translator=translator)
+        japanese = item(
+            1,
+            "tech1",
+            title="イコールアース図法の北方領土表記を修正",
+            summary="日本政府が地図の表記変更を求めました",
+        )
+        engine._observe([japanese])
+        record = next(iter(engine.state["articles"].values()))
+        key = record["content_hash"]
+        engine.translation_cache["entries"][key] = {
+            "title_zh": record["title"],
+            "summary_zh": record["summary"],
+            "at": self.now.isoformat(),
+        }
+
+        engine._translate_articles([record])
+
+        self.assertTrue(translator.calls, "Japanese source text cached as Chinese must be retried")
+        entry = engine.translation_cache["entries"][key]
+        self.assertEqual(entry["title_zh"], "中文译文0")
+        self.assertEqual(entry["summary_zh"], "中文译文1")
+
+    def test_partial_cache_entry_retries_the_missing_title(self):
+        translator = StubTranslator()
+        engine = DigestEngine(self.config, self.now, translator=translator)
+        story = item(
+            1,
+            "tech1",
+            title="English title still visible",
+            summary="这条中文简介已经由简介生成器写入",
+        )
+        engine._observe([story])
+        record = next(iter(engine.state["articles"].values()))
+        key = record["content_hash"]
+        engine.translation_cache["entries"][key] = {
+            "title_zh": "",
+            "summary_zh": record["summary"],
+            "at": self.now.isoformat(),
+        }
+
+        engine._translate_articles([record])
+
+        self.assertTrue(translator.calls, "an empty title_zh must not mark the whole record complete")
+        self.assertTrue(engine.translation_cache["entries"][key]["title_zh"].startswith("【译】"))
 
     def test_translation_failure_keeps_the_original_text(self):
         translator = FailOnceTranslator()
@@ -533,6 +601,29 @@ class TranslationTest(unittest.TestCase):
         )
         self.assertEqual(engine.translation_cache["entries"], {})
 
+    def test_backfill_prioritises_newest_articles(self):
+        old_time = self.now - timedelta(days=1)
+        old_story = item(
+            1,
+            "tech1",
+            title="Old untranslated article",
+            summary="Old untranslated summary",
+        )
+        DigestEngine(self.config, old_time).process([old_story], None, False)
+
+        translator = StubTranslator()
+        config = dict(self.config, TRANSLATION={"BATCH_SIZE": 10, "MAX_NEW_PER_RUN": 1})
+        new_story = item(
+            2,
+            "tech1",
+            title="Newest untranslated article",
+            summary="Newest untranslated summary",
+        )
+        DigestEngine(config, self.now, translator=translator).process([new_story], None, False)
+
+        self.assertTrue(translator.calls)
+        self.assertEqual(translator.calls[0][0], "Newest untranslated article")
+
     def test_backfill_does_not_stall_on_a_pool_larger_than_the_ceiling(self):
         """A bounded pass must skip what it deferred, or it never progresses.
 
@@ -595,6 +686,23 @@ class TranslationTest(unittest.TestCase):
                     entry["title"].startswith("【译】"),
                     f"briefing entry left untranslated: {entry['title']}",
                 )
+
+    def test_existing_digest_retries_missing_title_translations(self):
+        pool = self.make_items(6)
+        first = DigestEngine(self.config, self.now)
+        original = first.process(pool, "morning_digest", True)
+        self.assertIsNotNone(original)
+
+        translator = StubTranslator()
+        config = dict(self.config, TRANSLATION={"BATCH_SIZE": 10, "MAX_NEW_PER_RUN": 0})
+        second = DigestEngine(config, self.now, translator=translator)
+        result = second.process(pool, "morning_digest", True)
+
+        self.assertIsNotNone(result)
+        self.assertTrue(translator.calls, "an existing digest must retry its untranslated titles")
+        for stat in result.stats:
+            for entry in stat.get("titles", []):
+                self.assertTrue(entry["title"].startswith("【译】"), entry["title"])
 
     def test_per_run_ceiling_bounds_api_usage(self):
         translator = StubTranslator()

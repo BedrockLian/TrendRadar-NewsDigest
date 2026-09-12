@@ -196,7 +196,18 @@ class DigestEngine:
         # briefing slot) so the whole workspace converges, but every story is
         # translated exactly once thanks to the content-hash cache.
         if self.translator and getattr(self.translator, "enabled", False):
-            self._translate_articles(list(self.state.get("articles", {}).values()))
+            # Spend the bounded backfill budget on what the reader sees now.
+            # State dicts retain insertion order, which is oldest-first after a
+            # long-lived deployment; taking values() directly stranded today's
+            # headlines behind more than a thousand older records.
+            tracked = sorted(
+                self.state.get("articles", {}).values(),
+                key=lambda record: str(
+                    record.get("first_seen") or record.get("published_at") or ""
+                ),
+                reverse=True,
+            )
+            self._translate_articles(tracked)
 
         result: Optional[DigestResult] = None
         slot_keys = set(self.config.get("SLOT_KEYS", []))
@@ -550,9 +561,34 @@ class DigestEngine:
 
     @staticmethod
     def _needs_translation(text: str) -> bool:
-        """True when the text carries no CJK, i.e. it is not already Chinese."""
+        """True when text is not already Simplified/Traditional Chinese.
 
-        return bool(text) and not any("\u4e00" <= ch <= "\u9fff" for ch in text)
+        Han characters alone cannot distinguish Chinese from Japanese. Hiragana
+        and Hangul are decisive source-language signals; Katakana is decisive
+        only when it dominates Han text, because a Chinese translation may retain
+        a Japanese proper name. Without this distinction, headlines containing
+        日本 or 北方領土 are cached verbatim as if they were Chinese.
+        """
+
+        if not text:
+            return False
+        hiragana = any("\u3040" <= ch <= "\u309f" for ch in text)
+        hangul = any("\uac00" <= ch <= "\ud7af" for ch in text)
+        if hiragana or hangul:
+            return True
+
+        han_count = sum("\u4e00" <= ch <= "\u9fff" for ch in text)
+        katakana_count = sum(
+            ("\u30a0" <= ch <= "\u30ff")
+            or ("\u31f0" <= ch <= "\u31ff")
+            or ("\uff66" <= ch <= "\uff9f")
+            for ch in text
+        )
+        # Katakana-only text is Japanese; a Chinese sentence may legitimately
+        # retain a shorter Katakana proper name, so that is already target text.
+        if katakana_count and (han_count == 0 or katakana_count > han_count):
+            return True
+        return han_count == 0
 
     def _localized(self, record: Dict[str, Any], field: str) -> str:
         """Translated text when available, otherwise the original field.
@@ -729,8 +765,25 @@ class DigestEngine:
             key = str(record.get("content_hash") or "")
             if not key:
                 continue
-            if isinstance(entries.get(key), dict):
-                continue
+            entry = entries.get(key)
+            if isinstance(entry, dict):
+                # A record is complete only when every source-language field has
+                # a usable target-language value.  Older versions cached blank
+                # titles and Japanese source text as completed translations;
+                # accepting the dict's mere presence makes those defects
+                # permanent.
+                complete = all(
+                    not self._needs_translation(str(record.get(field) or ""))
+                    or (
+                        bool(str(entry.get(f"{field}_zh") or "").strip())
+                        and not self._needs_translation(
+                            str(entry.get(f"{field}_zh") or "")
+                        )
+                    )
+                    for field in ("title", "summary")
+                )
+                if complete:
+                    continue
             # Refused during this run, or recently enough that another attempt
             # would only buy the same answer.  Older refusals expire: the
             # provider's filter is intermittent, and a permanent mark would
@@ -1187,6 +1240,11 @@ class DigestEngine:
                 for article_id in existing.get("article_ids", [])
                 if article_id in self.state["articles"]
             ]
+            # A digest can have been created before translation recovered.  Its
+            # summaries are regenerated on later crawls, so its missing titles
+            # must receive the same retry instead of remaining in the source
+            # language for the rest of the slot.
+            self._translate_articles(articles, ignore_ceiling=True)
             self._apply_ai_summaries(articles)
             return self._result_from_records(
                 result_id=result_id,
