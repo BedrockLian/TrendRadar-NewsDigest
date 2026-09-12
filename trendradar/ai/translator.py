@@ -46,7 +46,12 @@ class AITranslator:
             ai_config: AI 模型配置（LiteLLM 格式）
         """
         self.translation_config = translation_config
-        self.ai_config = ai_config
+        # Translation can use a task-specific model without changing analysis or
+        # filtering.  Copy the shared config so callers never observe mutation.
+        self.ai_config = dict(ai_config)
+        translation_model = str(translation_config.get("MODEL") or "").strip()
+        if translation_model:
+            self.ai_config["MODEL"] = translation_model
 
         # 翻译配置
         self.enabled = translation_config.get("ENABLED", False)
@@ -54,7 +59,7 @@ class AITranslator:
         self.scope = translation_config.get("SCOPE", {"HOTLIST": True, "RSS": True, "STANDALONE": True})
 
         # 创建 AI 客户端（基于 LiteLLM）
-        self.client = AIClient(ai_config)
+        self.client = AIClient(self.ai_config)
 
         # 加载提示词模板
         self.system_prompt, self.user_prompt_template = load_prompt_template(

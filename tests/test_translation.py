@@ -8,7 +8,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from trendradar.core.loader import _load_digest_config
+from trendradar.ai.translator import AITranslator
+from trendradar.core.loader import _load_ai_translation_config, _load_digest_config
 from trendradar.digest import DigestEngine
 
 from tests.test_digest import item
@@ -603,6 +604,42 @@ class TranslationTest(unittest.TestCase):
 
         # 3 records x (title + summary) = 6 texts, never all 40.
         self.assertEqual(sum(len(call) for call in translator.calls), 6)
+
+
+class TranslationModelConfigTest(unittest.TestCase):
+    """Translation may use a stable model without changing other AI tasks."""
+
+    def test_yaml_translation_model_reaches_translator(self):
+        feature = _load_ai_translation_config({
+            "ai_translation": {"enabled": True, "model": "deepseek/deepseek-chat"}
+        })
+        shared = {"MODEL": "deepseek/deepseek-flash", "API_KEY": "test-key"}
+
+        translator = AITranslator(feature, shared)
+
+        self.assertEqual(feature["MODEL"], "deepseek/deepseek-chat")
+        self.assertEqual(translator.client.model, "deepseek/deepseek-chat")
+        self.assertEqual(shared["MODEL"], "deepseek/deepseek-flash")
+
+    def test_environment_overrides_translation_model(self):
+        with mock.patch.dict(
+            os.environ,
+            {"AI_TRANSLATION_MODEL": "deepseek/deepseek-chat"},
+        ):
+            feature = _load_ai_translation_config({
+                "ai_translation": {"model": "deepseek/deepseek-flash"}
+            })
+
+        self.assertEqual(feature["MODEL"], "deepseek/deepseek-chat")
+
+    def test_missing_translation_model_reuses_shared_model(self):
+        feature = _load_ai_translation_config({"ai_translation": {"enabled": True}})
+        translator = AITranslator(
+            feature,
+            {"MODEL": "deepseek/deepseek-v4-flash", "API_KEY": "test-key"},
+        )
+
+        self.assertEqual(translator.client.model, "deepseek/deepseek-v4-flash")
 
 
 class TranslationPacingTest(unittest.TestCase):

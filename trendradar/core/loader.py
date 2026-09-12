@@ -374,7 +374,7 @@ def _load_ai_analysis_config(config_data: Dict) -> Dict:
 
 
 def _load_ai_translation_config(config_data: Dict) -> Dict:
-    """加载 AI 翻译配置（功能配置，模型配置见 _load_ai_config）"""
+    """加载 AI 翻译配置（可单独覆盖共享 AI 模型）。"""
     trans_config = config_data.get("ai_translation", {})
 
     enabled_env = _get_env_bool("AI_TRANSLATION_ENABLED")
@@ -383,6 +383,7 @@ def _load_ai_translation_config(config_data: Dict) -> Dict:
 
     return {
         "ENABLED": enabled_env if enabled_env is not None else trans_config.get("enabled", False),
+        "MODEL": _get_env_str("AI_TRANSLATION_MODEL") or trans_config.get("model", ""),
         "LANGUAGE": _get_env_str("AI_TRANSLATION_LANGUAGE") or trans_config.get("language", "English"),
         "PROMPT_FILE": trans_config.get("prompt_file", "ai_translation_prompt.txt"),
         "SCOPE": {

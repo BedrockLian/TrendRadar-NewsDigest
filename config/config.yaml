@@ -702,12 +702,13 @@ ai_analysis:
 
 
 # ===============================================================
-# 10. AI 翻译功能（模型配置见上方 ai 段）
+# 10. AI 翻译功能（默认复用 ai 段，也可在此单独指定模型）
 #
 # 对推送标题进行翻译，不包含 AI 分析的内容
 # ===============================================================
 ai_translation:
-  enabled: false                    # 暂无 AI 服务商，之后可单独启用标题翻译
+  enabled: false                    # 生产可由 AI_TRANSLATION_ENABLED=true 覆盖
+  model: "deepseek/deepseek-chat"   # 翻译专用稳定模型；AI_TRANSLATION_MODEL 可覆盖
   language: "中文"                   # 翻译目标语言（如 "English", "Korean", "法语"）
   prompt_file: "ai_translation_prompt.txt"   # 提示词文件（相对于 config 目录）
 

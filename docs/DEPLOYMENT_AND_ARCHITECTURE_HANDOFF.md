@@ -160,8 +160,10 @@ scp .\待上传文件 campus-server:/tmp/
 启用 `AI_TRANSLATION_ENABLED` 后，`DigestEngine` 在投影前为文章补上译文，因此**简报、
 简报后更新、全部新闻**三处一起中文化（详见 4.4）。译文按 `content_hash` 缓存，同一篇文章
 只翻译一次；积压回填的速度由 `config/config.yaml` 的 `digest.translation` 控制
-（`batch_size` / `max_new_per_run` / `max_retry_calls`，默认 40 / 40 / 8），
-对应的环境变量 `TRANSLATION_BATCH_SIZE` / `TRANSLATION_MAX_NEW_PER_RUN` /
+（`batch_size` / `max_new_per_run` / `max_retry_calls`，默认 40 / 40 / 8）。翻译模型可由
+`ai_translation.model` 独立指定，避免全局分析模型不适合批量翻译；环境变量
+`AI_TRANSLATION_MODEL` 可覆盖该值。节奏参数对应的环境变量
+`TRANSLATION_BATCH_SIZE` / `TRANSLATION_MAX_NEW_PER_RUN` /
 `TRANSLATION_MAX_RETRY_CALLS` 可以覆盖文件值。
 
 未启用、未配置 `AI_API_KEY` 或接口失败时，页面回落到原始 RSS 文本，行为与加入该功能前一致。
@@ -266,6 +268,12 @@ Docker 部署另有其路径：`http.server` 在容器内提供 `/app/public`（
 `TRANSLATION_MAX_RETRY_CALLS` / `TRANSLATION_REFUSAL_RETRY_HOURS` /
 `TRANSLATION_MAX_PASS_SECONDS` 优先于文件值。这些值经 `_load_digest_config()` 进入引擎的
 `TRANSLATION` 段。
+
+翻译器默认复用 `ai.model`，但 `ai_translation.model` 可单独覆盖；生产环境也可用
+`AI_TRANSLATION_MODEL` 覆盖文件值。2026-09-12 生产同批 40 篇（80 段、6930 字符）探针显示：
+有效生产模型 `deepseek/deepseek-flash` 连续三次均返回空响应（`parsed=0`、`raw_chars=0`，
+每次 23～24 秒），而 `deepseek/deepseek-chat` 连续三次均为 `80/80`、9.1～10.1 秒。因此正文翻译固定使用
+`deepseek/deepseek-chat`，其他 AI 功能仍可继续使用全局模型。
 
 **时间才是要卡住的量。** 供应商会成段拒绝：2026-09-11 23:30 那轮 10 次调用耗时 221 秒、
 只落地 28/40 条，整轮 5 分 22 秒（当时只有调用次数上限）。因此 `_translate_texts()` 在每次
@@ -507,8 +515,10 @@ trendradar-collect.timer
 
 AI 简介使用 `AI_API_KEY`、`AI_MODEL`，兼容接口按需增加 `AI_API_BASE`。没有密钥或接口失败时，简报和统计周报仍使用 RSS 摘要生成。通知复用项目现有环境变量，例如 `FEISHU_WEBHOOK_URL`、`DINGTALK_WEBHOOK_URL`、`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` 和邮件变量；未配置渠道时只采集并生成网页与 Markdown。
 
-启用工作台正文翻译需同时设置 `AI_TRANSLATION_ENABLED=true`（可选 `AI_TRANSLATION_LANGUAGE`，
-默认取 `config.yaml` 的 `ai_translation.language`）。两者都通过环境变量覆盖配置文件。
+启用工作台正文翻译需同时设置 `AI_TRANSLATION_ENABLED=true`。目标语言由
+`AI_TRANSLATION_LANGUAGE` 覆盖 `config.yaml` 的 `ai_translation.language`；翻译模型由
+`AI_TRANSLATION_MODEL` 覆盖 `ai_translation.model`。未单独指定模型时才回退到共享的
+`AI_MODEL` / `ai.model`。
 
 ### 7.5 生产访问链路（实测）
 
