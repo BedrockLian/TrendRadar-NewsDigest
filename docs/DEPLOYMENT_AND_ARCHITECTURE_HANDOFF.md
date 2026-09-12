@@ -11,7 +11,7 @@
 - 发布锁、原子切换、回滚和验证；
 - 当前已经验证的内容与仍需现场确认的内容。
 
-GitHub Actions 不在当前支持范围内。`.github/workflows/crawler.yml` 保持仓库原状，仅保留手动入口，不应把它当作本项目的采集、状态持久化或线上发布保障。
+GitHub Actions 不在当前支持范围内。`.github/workflows/crawler.yml` 已改为仅保留手动入口（`workflow_dispatch`），不再有定时触发，不应把它当作本项目的采集、状态持久化或线上发布保障。
 
 ## 2. 仓库和生产环境
 
@@ -26,8 +26,9 @@ GitHub Actions 不在当前支持范围内。`.github/workflows/crawler.yml` 保
 | 生产网址 | `https://news.blian117.dpdns.org` |
 | 生产运行用户 | `trendradar:trendradar` |
 | 生产时区 | `Asia/Shanghai` |
-| 生产调度 | systemd timer，每小时 `:00`、`:30` 运行 |
+| 生产调度 | systemd timer，每 30 分钟触发（每小时 `:00` 与 `:30`） |
 | 生产版本标记 | `/opt/trendradar/.deployed-commit` |
+| 本机运维脚本（仓库外） | `C:\Users\ASUS\Documents\News\ops\`（`precheck.sh` / `deploy.sh` / `probe_*.py`） |
 
 生产目录不是 Git 工作树。服务器代码由本地已提交版本生成 Git archive，再解压部署；不要在服务器上使用 `git pull` 判断或更新版本。
 
@@ -161,18 +162,20 @@ VentureBeat 的 FeedBurner 超过 8 天未更新、官网 Feed 返回 429，均�
 - `_si` / `_ci` 是 `sources` / `categories` 的下标，客户端水合时还原成显示字符串；
 - `updates` 是下标数组，避免把「简报后更新」的条目整份复制一遍。
 
-实测（生产数据 876 篇）：首屏 gzip **152.9 KB → 81.6 KB**，内联载荷 raw **464.6 KB → 236.9 KB**。
+拆分当时的实测（生产数据 876 篇）：首屏 gzip **152.9 KB → 81.6 KB**，内联载荷 raw **464.6 KB → 236.9 KB**；当前（2026-09-12，2644 篇）首页 raw 约 **422 KB**、gzip 约 **145 KB**。
 
 ### 3.5 正文翻译
 
 启用 `AI_TRANSLATION_ENABLED` 后，`DigestEngine` 在投影前为文章补上译文，因此**简报、
-简报后更新、全部新闻**三处一起中文化（详见 4.4）。译文按 `content_hash` 缓存，同一篇文章
-只翻译一次；积压回填的速度由 `config/config.yaml` 的 `digest.translation` 控制
-（`batch_size` / `max_new_per_run` / `max_retry_calls`，默认 40 / 40 / 8）。翻译模型可由
+简报后更新、全部新闻**三处一起中文化（详见 4.4）。译文按 `content_hash` 缓存；正常只翻译
+一次，缺少标题或简介译文的条目会在后续轮次补齐。积压回填的速度由 `config/config.yaml` 的
+`digest.translation` 控制（`batch_size` / `max_new_per_run` / `max_retry_calls` /
+`refusal_retry_hours` / `max_pass_seconds`，默认 40 / 40 / 8 / 6 / 75）。翻译模型可由
 `ai_translation.model` 独立指定，避免全局分析模型不适合批量翻译；环境变量
-`AI_TRANSLATION_MODEL` 可覆盖该值。节奏参数对应的环境变量
+`AI_TRANSLATION_MODEL` 可覆盖该值。五个节奏参数对应的环境变量
 `TRANSLATION_BATCH_SIZE` / `TRANSLATION_MAX_NEW_PER_RUN` /
-`TRANSLATION_MAX_RETRY_CALLS` 可以覆盖文件值。
+`TRANSLATION_MAX_RETRY_CALLS` / `TRANSLATION_REFUSAL_RETRY_HOURS` /
+`TRANSLATION_MAX_PASS_SECONDS` 可以覆盖文件值。
 
 未启用、未配置 `AI_API_KEY` 或接口失败时，页面回落到原始 RSS 文本，行为与加入该功能前一致。
 
@@ -283,6 +286,10 @@ Docker 部署另有其路径：`http.server` 在容器内提供 `/app/public`（
 每次 23～24 秒），而 `deepseek/deepseek-chat` 连续三次均为 `80/80`、9.1～10.1 秒。因此正文翻译固定使用
 `deepseek/deepseek-chat`，其他 AI 功能仍可继续使用全局模型。
 
+2026-09-12 生产运行态核对：全局 `AI_MODEL=deepseek/deepseek-flash`（环境变量），正文翻译
+`ai_translation.model=deepseek/deepseek-chat`（YAML，环境变量未覆盖），节奏 40/40/8/6/75，与仓库
+`config/config.yaml` 完全一致。
+
 **语言判断不能把“含汉字”直接等同于中文。** 日文标题常同时含汉字和假名；旧实现只要看到
 `\u4e00-\u9fff` 就判定无需翻译，导致 NHK 的日文标题和简介被原样写入翻译缓存。现在平假名与
 韩文字符优先判为待翻译；片假名仅在其数量超过汉字、或全文没有汉字时判为待翻译，以允许中文
@@ -319,8 +326,8 @@ Docker 部署另有其路径：`http.server` 在容器内提供 `/app/public`（
 [简报] 翻译回填: 40/40 条入库, 1 次调用, 9.5s
 ```
 
-**单轮内的 API 调用预算是按「本轮实际排队的记录数」算的，不是按整池。** 每轮采集会把整份
-约 2300 条的在册文章交给引擎，若按池算就会授权约 100 次调用。旧实现正是这样：一次被风控
+**单轮内的 AI 调用预算是按「本轮实际排队的记录数」算的，不是按整池。** 每轮采集会把整份
+在册文章（当前约 2600 条）交给引擎，若按池算就会授权约 100 次调用。旧实现正是这样：一次被风控
 拒绝的批次会递归对半切分，外加 48 次重试额度，把单轮翻译拖到 8~9 分钟（实测调用约 3~9 秒/
 次，2026-09-11 23:00 那轮采集总耗时 9 分 46 秒，其中 8 分 21 秒花在这一步，systemd 的硬超时
 是 900 秒）。现在单轮上限为「排队批次数 + 8」次调用，正常情况下就是 1 次调用、约 10 秒。
@@ -435,7 +442,7 @@ Docker 的 `http.server` 从 `/app` 启动，并通过 `--directory /app/public`
 
 ### 7.1 Windows 本地开发
 
-要求：Python 3.12、`uv`。
+要求：Python ≥3.12（`pyproject.toml`）、`uv`。本机 `.venv` 当前为 Python 3.14.5，生产 `.venv` 为 3.12.14。
 
 ```powershell
 cd C:\Users\ASUS\Documents\News\TrendRadar
@@ -515,13 +522,11 @@ trendradar-collect.timer
 
 服务的关键限制：
 
-- `Type=oneshot`；
+- `Type=oneshot`、`Nice=10`；
 - `TimeoutStartSec=900`；
-- `CPUQuota=50%`；
-- `MemoryMax=600M`；
-- `NoNewPrivileges=true`；
-- `ProtectSystem=strict`；
-- 仅 `/opt/trendradar` 可写。
+- `CPUQuota=50%`、`MemoryMax=600M`；
+- `NoNewPrivileges=true`、`PrivateTmp=true`、`ProtectHome=true`；
+- `ProtectSystem=strict`，`ReadWritePaths=/opt/trendradar`（仅该目录可写）。
 
 环境变量位于 `/opt/trendradar/config/news-digest.env`，不要把值写进仓库或交接文档。该文件应由 `trendradar:trendradar` 持有并设为 `0640`。
 
@@ -587,6 +592,8 @@ scp "$env:TEMP\trendradar-$commit.tar" campus-server:/tmp/
 
 在 `/tmp` 下创建独立预检目录，解压 archive，并使用生产虚拟环境运行测试。不要先覆盖 `/opt/trendradar`。
 
+当前用仓库外的 `C:\Users\ASUS\Documents\News\ops\precheck.sh`（传到服务器后 `sh /tmp/precheck.sh <commit>`）自动完成本节检查：解压 archive、用生产 venv 跑全部单元测试、`py_compile`、`sh -n deployment/run.sh`、在样例目录验证 `publish_static` 白名单（`.state.json` / `.translations.json` 及其 `.gz` 不得泄漏）、验证 `serve_public` 的 gzip 与敏感路径 404、验证 `RENAME_EXCHANGE`；全部通过后输出 `PRECHECK: PASS`。
+
 需要确认：
 
 - archive 本地与远端 SHA-256 一致；
@@ -605,6 +612,10 @@ scp "$env:TEMP\trendradar-$commit.tar" campus-server:/tmp/
 - `/opt/trendradar/config`；
 - `/opt/trendradar/output`；
 - `/opt/trendradar/public`，直到新代码完成一次成功发布。
+
+当前用仓库外的 `C:\Users\ASUS\Documents\News\ops\deploy.sh`（`sh /tmp/deploy.sh <commit>`）自动执行发布：停止 timer 并等待在跑的轮次结束；把现有源码备份到 `/opt/trendradar-src-backup-<时间戳>`；只替换 `trendradar/ deployment/ docker/ tests/ docs/ mcp_server/`、`config/*.yaml` 与顶层 `*.py` / `*.toml` / `version`；安装 systemd 单元并 `daemon-reload`；写入 `.deployed-commit`；重启 `trendradar-web.service`；重新启用 timer。下面的手工命令是它的等价步骤。
+
+> **`deploy.sh` 会用归档里的 `config/*.yaml` 覆盖生产同名配置**，因此配置改动必须走仓库提交，不要在服务器上直接改 YAML；运行环境变量在 `config/news-digest.env`，不受覆盖影响。
 
 替换源码后：
 
@@ -626,7 +637,7 @@ sudo systemctl start trendradar-collect.service
 ```powershell
 $env:PYTHONIOENCODING = 'utf-8'
 uv run --frozen python -m unittest discover -s tests -p 'test_*.py'
-uv run --frozen python -m py_compile deployment/publish_static.py deployment/run_once.py docker/manage.py trendradar/__main__.py trendradar/context.py trendradar/core/scheduler.py trendradar/digest/engine.py trendradar/report/archive.py trendradar/report/html.py
+uv run --frozen python -m py_compile deployment/compress.py deployment/serve_public.py deployment/publish_static.py deployment/run_once.py docker/manage.py trendradar/__main__.py trendradar/context.py trendradar/core/scheduler.py trendradar/digest/engine.py trendradar/report/archive.py trendradar/report/generator.py trendradar/report/html.py trendradar/report/workspace_template.py
 git diff --check
 ```
 
@@ -635,6 +646,8 @@ Shell 语法可用 Git for Windows 验证：
 ```powershell
 & 'C:\Program Files\Git\usr\bin\sh.exe' -n deployment/run.sh docker/entrypoint.sh
 ```
+
+以上命令与服务器 `ops/precheck.sh` 等价（后者还会验证发布白名单、`serve_public` 与 `RENAME_EXCHANGE`）；`unittest discover` 当前为 **112** 个用例。
 
 ### 9.2 公共目录安全验证
 
@@ -693,7 +706,9 @@ ssh campus-server 'journalctl -u trendradar-collect.service -n 200 --no-pager'
 
 使用 HTTPS 请求验证页面和敏感路径，不要仅检查本地文件存在。
 
-## 10. 本次改版的已验证证据
+## 10. 历史发布记录
+
+### 10.1 2026-09-08 初版发布
 
 在提交前已完成：
 
@@ -712,6 +727,14 @@ ssh campus-server 'journalctl -u trendradar-collect.service -n 200 --no-pager'
 - 校园服务器 Linux 6.6 上 `RENAME_EXCHANGE` 已做临时目录实测。
 
 Docker CLI 在当前 Windows 开发机不可用，因此本地没有执行完整镜像构建。Dockerfile、entrypoint、管理命令、Shell 语法和共享发布模块已经验证；发布前若目标环境依赖 Docker，应在有 Docker daemon 的机器补跑源码镜像构建和容器级 HTTP 检查。
+
+### 10.2 2026-09-12 后续发布（翻译与来源）
+
+- 正文翻译使用独立稳定模型 `deepseek/deepseek-chat`（`ai_translation.model`），不再受全局 `AI_MODEL` 影响；
+- 标题本地化修复：日文按假名/韩文优先判外文，翻译缓存按字段校验完整性，回填按 `first_seen` 从新到旧，已生成的当期简报在后续采集时补译标题；
+- RSS 扩源至 52：新增 TechCrunch（官网 Feed）、The Verge、Engadget；生产 canary 分别解析 20 / 10 / 20 条，48 小时内有更新，且与存量文章零重合；
+- 部署后连续三轮实测：51/52、52/52、51/52 个源抓取成功，每轮 974～999 条，翻译均 40/40（8.3～9.1 秒），整轮约 3.5 分钟；
+- 全量单元测试 112 个用例通过；生产 `config/config.yaml` 与仓库完全一致。
 
 ## 11. 故障定位
 
@@ -755,7 +778,7 @@ Docker CLI 在当前 Windows 开发机不可用，因此本地没有执行完整
 4. 看 `output/briefings/.translations.json` 的 `entries` 是否在增长：不增长说明请求都被拒了，
    再看 `refused` 里被拒条目的时间戳；
 5. 不要在生产里加插桩再跑——在 `/tmp` 用 `/opt/trendradar/.venv/bin/python` 单独调用
-   `AITranslator.translate_batch` 测批次耗时与成败（`ops/probe_batch.py` 就是这个用途）。
+   `AITranslator.translate_batch` 测批次耗时与成败（本机 `Documents\News\ops\probe_batch.py` 就是这个用途）。
 
 ### Windows 控制台报编码错误
 
@@ -776,7 +799,7 @@ $env:PYTHONIOENCODING = 'utf-8'
 5. 运行最小相关测试，再运行完整测试；
 6. 修改网页时必须同时做桌面和手机浏览器验证；
 7. 修改发布路径时必须验证敏感文件 404；
-8. 仅从已提交 commit 生成生产 archive；
+8. 仅从已提交 commit 生成生产 archive，并用本机 `Documents\News\ops\` 的 `precheck.sh` / `deploy.sh` 完成预检与上线；
 9. 部署后手动触发一次 service，并用 HTTPS 验证首页、归档和敏感路径；
 10. 更新本文件中的验证事实和新限制。
 
