@@ -76,60 +76,81 @@ THEME_CSS = r"""
         unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
     :root {
       color-scheme: light;
-      --app-bg: #eef3f6;
-      --surface: #ffffff;
-      --surface-raised: #f7fafb;
-      --sidebar: #f8fafb;
-      --sidebar-active: #dff4f6;
-      --ink: #0c1c29;
-      --ink-strong: #07131e;
-      --muted: #64778a;
-      --faint: #91a0ad;
-      --rule: #d7e1e6;
-      --rule-strong: #bdcbd2;
-      --accent: #079aac;
-      --accent-bright: #16c7d3;
-      --accent-soft: #def5f6;
-      --signal: #e74658;
-      --signal-soft: #ffeaed;
-      --focus: #13b9c8;
-      --backdrop: rgba(4, 16, 24, .52);
-      --font-ui: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, "HarmonyOS Sans SC", MiSans, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-      --font-mono: "IBM Plex Mono", "Cascadia Mono", "SFMono-Regular", Consolas, ui-monospace, "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+      /* tech-utility（Datadog / GitHub 一脉）方向库原值。派生色一律用 oklch()
+         或 color-mix 生成，不引入自造 hex —— 页面里所有灰阶都是这六支的亲属，
+         换方向只需换这一处。 */
+      --bg:          oklch(98% 0.005 250);
+      --surface:     oklch(100% 0 0);
+      --ink:         oklch(22% 0.02 240);
+      --muted:       oklch(50% 0.018 240);
+      --rule:        oklch(90% 0.008 240);
+      --accent:      oklch(58% 0.16 145);
+      --bg-soft:     oklch(96% 0.006 250);
+      --bg-hover:    oklch(93.5% 0.009 250);
+      --ink-2:       var(--muted);
+      --ink-3:       oklch(52% 0.016 240);
+      --line:        var(--rule);
+      --line-strong: oklch(66% 0.012 240);
+      --accent-ink:  oklch(44% 0.13 145);
+      --accent-deep: oklch(37% 0.11 145);
+      --accent-soft: oklch(95% 0.025 145);
+      --warn:        oklch(62% 0.14 75);
+      --signal:      oklch(48% 0.16 27);
+      --signal-soft: oklch(95% 0.028 27);
+      --focus:       oklch(50% 0.14 250);
+      --backdrop:    oklch(22% 0.02 240 / .45);
+      /* 别名层：简报存档与详情页沿用旧变量名，值全部指向上面的六支，
+         这样两个页面不必改一行也能跟着换色，且不留第二套色。 */
+      --app-bg: var(--bg);
+      --surface-raised: var(--bg-soft);
+      --sidebar: var(--bg-soft);
+      --sidebar-active: var(--bg-hover);
+      --ink-strong: var(--ink);
+      --faint: var(--ink-3);
+      --rule-strong: var(--line-strong);
+      --accent-bright: var(--accent-ink);
+      --radius-sm: 3px;
+      --radius-md: 5px;
+      --radius-lg: 8px;
+      --bar-h: 48px;
+      --font-ui: "IBM Plex Sans", "Segoe UI", "Segoe UI Variable Text", system-ui, -apple-system, "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+      --font-mono: "IBM Plex Mono", "Cascadia Mono", "SFMono-Regular", Consolas, "DejaVu Sans Mono", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", ui-monospace, sans-serif;
     }
     :root[data-theme="dark"] {
       color-scheme: dark;
-      --app-bg: #071923;
-      --surface: #0a1d27;
-      --surface-raised: #0d2430;
-      --sidebar: #081821;
-      --sidebar-active: #153746;
-      --ink: #e9f0f3;
-      --ink-strong: #ffffff;
-      --muted: #9eb0be;
-      --faint: #6f8492;
-      --rule: #29414d;
-      --rule-strong: #3b5866;
-      --accent: #43d6df;
-      --accent-bright: #5ce7ee;
-      --accent-soft: #123b46;
-      --signal: #ff5968;
-      --signal-soft: #472530;
-      --focus: #66e8ee;
-      --backdrop: rgba(0, 0, 0, .7);
+      /* 同一套令牌的深色档：对比度逐对按 oklch 的 L* 算过，
+         正文 12.9:1、次要文字 5.5:1、主按钮 7.0:1。 */
+      --bg:          oklch(19% 0.014 250);
+      --surface:     oklch(22.5% 0.016 250);
+      --ink:         oklch(93% 0.008 250);
+      --muted:       oklch(71% 0.016 250);
+      --rule:        oklch(31% 0.015 250);
+      --accent:      oklch(72% 0.15 145);
+      --bg-soft:     oklch(24.5% 0.016 250);
+      --bg-hover:    oklch(29% 0.02 250);
+      --ink-3:       oklch(64% 0.015 250);
+      --line-strong: oklch(52% 0.015 250);
+      --accent-ink:  oklch(80% 0.14 145);
+      --accent-deep: oklch(87% 0.12 145);
+      --accent-soft: oklch(31% 0.05 145);
+      --warn:        oklch(78% 0.13 75);
+      --signal:      oklch(72% 0.15 27);
+      --signal-soft: oklch(31% 0.06 27);
+      --focus:       oklch(75% 0.13 250);
+      --backdrop:    oklch(0% 0 0 / .68);
     }
 """
 
 
 SHELL_CSS = r"""
     * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; scroll-padding-top: 84px; }
+    html { scroll-behavior: smooth; scroll-padding-top: calc(var(--bar-h) + 12px); }
     body {
       margin: 0;
-      background: var(--app-bg);
+      background: var(--bg);
       color: var(--ink);
       font-family: var(--font-ui);
-      font-size: 15px;
+      font-size: 14px;
       line-height: 1.5;
       text-rendering: optimizeLegibility;
       -webkit-font-smoothing: antialiased;
@@ -137,36 +158,36 @@ SHELL_CSS = r"""
     button, input, select { font: inherit; }
     button, select { cursor: pointer; }
     a { color: inherit; }
-    a:hover { color: var(--accent); }
-    :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+    a:hover { color: var(--accent-ink); }
+    :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
     [hidden] { display: none !important; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
     .app-frame { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100vh; transition: grid-template-columns .22s ease; }
-    .sidebar { position: sticky; top: 0; z-index: 50; display: flex; flex-direction: column; min-width: 0; height: 100vh; overflow: hidden auto; background: var(--sidebar); border-right: 1px solid var(--rule); transition: transform .22s ease, visibility .22s ease; }
-    .sidebar-head { display: flex; align-items: center; gap: 10px; min-height: 72px; padding: 14px 14px 14px 18px; border-bottom: 1px solid var(--rule); }
-    .brand { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--ink-strong); font-size: 1.18rem; font-weight: 730; letter-spacing: -.02em; text-decoration: none; }
-    .brand i { color: var(--accent); font-size: 1.35rem; }
-    .sidebar-toggle, .top-icon-button { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; flex: 0 0 auto; border: 1px solid var(--rule); border-radius: 5px; background: transparent; color: var(--muted); }
+    .sidebar { position: sticky; top: 0; z-index: 50; display: flex; flex-direction: column; min-width: 0; height: 100vh; overflow: hidden auto; background: var(--bg-soft); border-right: 1px solid var(--line); transition: transform .22s ease, visibility .22s ease; }
+    .sidebar-head { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 10px 10px 10px 16px; border-bottom: 1px solid var(--line); }
+    .brand { display: flex; align-items: center; gap: 9px; min-width: 0; color: var(--ink); font-size: 1.02rem; font-weight: 600; letter-spacing: -.01em; text-decoration: none; }
+    .brand i { color: var(--ink-3); font-size: 1.15rem; }
+    .sidebar-toggle, .top-icon-button { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex: 0 0 auto; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: transparent; color: var(--muted); }
     .sidebar-toggle { margin-left: auto; }
-    .sidebar-toggle:hover, .top-icon-button:hover { color: var(--ink); background: var(--surface-raised); }
-    .sidebar-nav { display: grid; gap: 4px; padding: 14px 10px; }
-    .sidebar-nav a { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 42px; padding: 0 12px; border-left: 3px solid transparent; border-radius: 5px; color: var(--muted); font-weight: 570; text-decoration: none; }
-    .sidebar-nav a:hover { color: var(--ink); background: var(--surface-raised); }
-    .sidebar-nav a[aria-current="page"] { color: var(--ink-strong); background: var(--sidebar-active); border-left-color: var(--accent); }
-    .sidebar-nav i { font-size: 1rem; }
-    .nav-count { color: var(--faint); font-size: .78rem; font-weight: 520; }
-    .sidebar-section { padding: 16px 18px; border-top: 1px solid var(--rule); }
-    .sidebar-section h2 { margin: 0 0 12px; color: var(--muted); font-size: .72rem; font-weight: 680; letter-spacing: .08em; text-transform: uppercase; }
-    .sidebar-footer { margin-top: auto; padding: 14px 18px; border-top: 1px solid var(--rule); }
-    .sidebar-theme { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); text-align: left; }
-    .sidebar-theme:hover { color: var(--ink); background: var(--surface-raised); }
+    .sidebar-toggle:hover, .top-icon-button:hover { color: var(--ink); background: var(--bg-hover); }
+    .sidebar-nav { display: grid; gap: 2px; padding: 12px 8px; }
+    .sidebar-nav a { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 34px; padding: 0 10px; border-left: 2px solid transparent; border-radius: var(--radius-sm); color: var(--muted); font-size: .87rem; font-weight: 500; text-decoration: none; }
+    .sidebar-nav a:hover { color: var(--ink); background: var(--bg-hover); }
+    .sidebar-nav a[aria-current="page"] { color: var(--ink); background: var(--bg-hover); border-left-color: var(--line-strong); font-weight: 600; }
+    .sidebar-nav i { font-size: .95rem; }
+    .nav-count { color: var(--ink-3); font-size: .76rem; font-weight: 500; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+    .sidebar-section { padding: 12px 14px; border-top: 1px solid var(--line); }
+    .sidebar-section h2 { margin: 0 0 10px; color: var(--ink-3); font-size: .68rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; font-family: var(--font-mono); }
+    .sidebar-footer { margin-top: auto; padding: 12px 14px; border-top: 1px solid var(--line); }
+    .sidebar-theme { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 9px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: .87rem; text-align: left; }
+    .sidebar-theme:hover { color: var(--ink); background: var(--bg-hover); }
     .app-page { min-width: 0; }
-    .topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 16px; min-height: 72px; padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--rule); }
+    .topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 14px; min-height: var(--bar-h); padding: 7px 18px; background: var(--surface); border-bottom: 1px solid var(--line); }
     .sidebar-expand { display: none; }
-    .topbar-title { min-width: 0; display: flex; align-items: center; gap: 10px; color: var(--ink-strong); font-weight: 680; }
-    .topbar-title i { color: var(--accent); }
-    .topbar-meta { display: flex; align-items: center; gap: 12px; margin-left: auto; color: var(--muted); font-size: .78rem; white-space: nowrap; }
+    .topbar-title { min-width: 0; display: flex; align-items: center; gap: 9px; color: var(--ink); font-weight: 600; font-size: .95rem; }
+    .topbar-title i { color: var(--ink-3); }
+    .topbar-meta { display: flex; align-items: center; gap: 10px; margin-left: auto; color: var(--muted); font-size: .78rem; white-space: nowrap; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
     .top-theme-label { display: none; }
     .sidebar-scrim { position: fixed; inset: 0; z-index: 45; display: none; border: 0; background: var(--backdrop); }
     html[data-sidebar="collapsed"] .app-frame { grid-template-columns: 0 minmax(0, 1fr); }
@@ -175,13 +196,13 @@ SHELL_CSS = r"""
 
     @media (max-width: 1180px) { .app-frame { grid-template-columns: 220px minmax(0, 1fr); } }
     @media (max-width: 960px) {
-      html { scroll-padding-top: 76px; }
+      html { scroll-padding-top: calc(var(--bar-h) + 8px); }
       .app-frame, html[data-sidebar="collapsed"] .app-frame { grid-template-columns: minmax(0, 1fr); }
       .sidebar, html[data-sidebar="collapsed"] .sidebar { position: fixed; left: 0; top: 0; width: min(300px, calc(100vw - 56px)); transform: translateX(-102%); visibility: hidden; box-shadow: 18px 0 60px rgba(0, 0, 0, .22); }
       html[data-drawer="open"] .sidebar { transform: translateX(0); visibility: visible; }
       html[data-drawer="open"] .sidebar-scrim { display: block; }
       .sidebar-expand, html[data-sidebar="collapsed"] .sidebar-expand { display: inline-flex; }
-      .topbar { min-height: 64px; padding: 10px 16px; }
+      .topbar { padding: 7px 14px; }
       .topbar-meta time { display: none; }
     }
     @media (max-width: 720px) { .topbar { gap: 10px; } .topbar-meta { gap: 4px; } }
@@ -303,10 +324,17 @@ def render_sidebar(
     </aside>"""
 
 
-def render_topbar(title: str, icon: str, meta: str = "") -> str:
-    meta_html = f"<time>{html.escape(meta)}</time>" if meta else ""
+def render_topbar(title: str, icon: str, meta: str = "", meta_html: str = "") -> str:
+    """Render the shared top bar.
+
+    ``meta`` is plain text and gets escaped; ``meta_html`` is a trusted,
+    server-built block (clocks, status pills) inserted before the theme toggle.
+    """
+
+    meta_block = f"<time>{html.escape(meta)}</time>" if meta else ""
+    meta_block += meta_html
     return f"""      <header class="topbar">
         <button class="top-icon-button sidebar-expand" type="button" data-sidebar-toggle aria-controls="app-sidebar" aria-expanded="false" aria-label="展开导航" title="展开导航"><i class="bi bi-list" aria-hidden="true"></i></button>
         <div class="topbar-title"><i class="bi bi-{html.escape(icon, quote=True)}" aria-hidden="true"></i><span>{html.escape(title)}</span></div>
-        <div class="topbar-meta">{meta_html}<button class="top-icon-button" type="button" data-theme-toggle aria-label="切换深浅色模式" title="切换深浅色模式"><i class="bi bi-moon" aria-hidden="true"></i></button></div>
+        <div class="topbar-meta">{meta_block}<button class="top-icon-button" type="button" data-theme-toggle aria-label="切换深浅色模式" title="切换深浅色模式"><i class="bi bi-moon" aria-hidden="true"></i></button></div>
       </header>"""

@@ -332,7 +332,8 @@ def render_detail(entry: ArchiveEntry, content: str) -> str:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#071923">
+  <meta name="theme-color" content="#fbfcfd" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#15181c" media="(prefers-color-scheme: dark)">
   <title>{html.escape(entry.title)} · TrendRadar</title>
 {HEAD_ASSETS}
 {THEME_BOOTSTRAP_SCRIPT}
@@ -340,24 +341,25 @@ def render_detail(entry: ArchiveEntry, content: str) -> str:
 {THEME_CSS}
 {SHELL_CSS}
     .brief-sidebar-meta p {{ margin: 5px 0; color: var(--muted); font-size: .78rem; }}
-    .brief-page {{ min-height: calc(100vh - 72px); background: var(--surface); }}
+    .brief-page {{ min-height: calc(100vh - var(--bar-h)); background: var(--surface); }}
     .brief-inner {{ width: min(100%, 940px); margin: 0 auto; padding: 38px 34px 76px; }}
     .back-link {{ display: inline-flex; align-items: center; gap: 7px; margin-bottom: 28px; color: var(--muted); font-size: .8rem; text-decoration: none; }}
-    .back-link:hover {{ color: var(--accent); }}
+    .back-link:hover {{ color: var(--ink); }}
     .brief-header {{ padding-bottom: 28px; border-bottom: 1px solid var(--rule-strong); }}
-    .brief-kind {{ display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border-radius: 4px; color: var(--accent); background: var(--accent-soft); font-size: .7rem; font-weight: 680; }}
+    .brief-kind {{ display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border-radius: var(--radius-sm); color: var(--accent-ink); background: var(--accent-soft); font-size: .7rem; font-weight: 600; }}
     .brief-kind-signal {{ color: var(--signal); background: var(--signal-soft); }}
-    .brief-header h1 {{ max-width: 800px; margin: 12px 0 13px; color: var(--ink-strong); font-size: clamp(2rem, 5vw, 3.5rem); line-height: 1.06; letter-spacing: -.045em; overflow-wrap: anywhere; }}
+    .brief-header h1 {{ max-width: 800px; margin: 12px 0 13px; color: var(--ink); font-size: clamp(1.8rem, 4vw, 2.6rem); line-height: 1.1; letter-spacing: -.03em; overflow-wrap: anywhere; }}
     .brief-actions {{ display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; color: var(--muted); font-size: .78rem; }}
-    .brief-actions a {{ display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 7px 11px; border: 1px solid var(--accent); border-radius: 5px; color: var(--accent); font-weight: 650; text-decoration: none; }}
+    .brief-actions a {{ display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 6px 11px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink); font-weight: 500; text-decoration: none; }}
+    .brief-actions a:hover {{ background: var(--bg-hover); }}
     .brief-content {{ margin-top: 32px; }}
-    .brief-heading {{ margin: 36px 0 10px; color: var(--ink-strong); overflow-wrap: anywhere; }}
+    .brief-heading {{ margin: 36px 0 10px; color: var(--ink); overflow-wrap: anywhere; }}
     h2.brief-heading {{ padding-bottom: 10px; border-bottom: 1px solid var(--rule); font-size: 1.15rem; }}
-    h3.brief-heading {{ color: var(--accent); font-size: .9rem; }}
-    .brief-lede {{ margin: 0 0 26px; padding: 14px 16px; border-left: 3px solid var(--accent); background: var(--surface-raised); color: var(--muted); }}
+    h3.brief-heading {{ color: var(--ink); font-size: .9rem; }}
+    .brief-lede {{ margin: 0 0 26px; padding: 13px 0; border-block: 1px solid var(--rule); background: transparent; color: var(--muted); }}
     .brief-paragraph {{ max-width: 760px; margin: 12px 0; color: var(--ink); }}
     .brief-note {{ display: flex; gap: 10px; max-width: 760px; margin: 9px 0; color: var(--muted); }}
-    .brief-note > span {{ color: var(--accent); }}
+    .brief-note > span {{ color: var(--ink-3); }}
     .brief-article {{ display: grid; grid-template-columns: 38px minmax(0, 1fr) 140px; gap: 14px; padding: 18px 0; border-top: 1px solid var(--rule); }}
     .brief-number {{ padding-top: 3px; color: var(--signal); font: 650 .76rem var(--font-mono); }}
     .brief-copy {{ min-width: 0; }}
@@ -365,7 +367,7 @@ def render_detail(entry: ArchiveEntry, content: str) -> str:
     .brief-article h3 {{ min-width: 0; margin: 0; color: var(--ink-strong); font-size: 1rem; line-height: 1.34; overflow-wrap: anywhere; }}
     .brief-article h3 a {{ text-decoration: none; }}
     .brief-copy p {{ display: -webkit-box; margin: 7px 0 0; overflow: hidden; color: var(--muted); font-size: .82rem; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }}
-    .detail-status {{ flex: 0 0 auto; padding: 3px 7px; border-radius: 4px; color: var(--accent); background: var(--accent-soft); font-size: .68rem; font-weight: 680; }}
+    .detail-status {{ flex: 0 0 auto; padding: 3px 7px; border-radius: 4px; color: var(--accent-ink); background: var(--accent-soft); font-size: .68rem; font-weight: 680; }}
     .detail-status-signal {{ color: var(--signal); background: var(--signal-soft); }}
     .detail-source {{ padding-top: 3px; color: var(--muted); font-size: .72rem; text-align: right; overflow-wrap: anywhere; }}
     .brief-empty {{ padding: 44px 0; color: var(--muted); }}
@@ -475,7 +477,8 @@ def render_index(entries: list[ArchiveEntry], generated_at: datetime | None = No
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#071923">
+  <meta name="theme-color" content="#fbfcfd" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#15181c" media="(prefers-color-scheme: dark)">
   <title>简报存档 · TrendRadar</title>
 {HEAD_ASSETS}
 {THEME_BOOTSTRAP_SCRIPT}
@@ -485,36 +488,36 @@ def render_index(entries: list[ArchiveEntry], generated_at: datetime | None = No
     .sidebar-categories {{ display: grid; gap: 3px; }}
     .sidebar-category {{ display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 36px; padding: 7px 10px; border: 0; border-left: 3px solid transparent; border-radius: 4px; background: transparent; color: var(--muted); text-align: left; }}
     .sidebar-category:hover {{ color: var(--ink); background: var(--surface-raised); }}
-    .sidebar-category[aria-pressed="true"] {{ color: var(--ink-strong); background: var(--sidebar-active); border-left-color: var(--accent); }}
-    .sidebar-category strong {{ color: var(--faint); font-size: .76rem; font-weight: 550; }}
-    .archive-page {{ min-height: calc(100vh - 72px); background: var(--surface); }}
+    .sidebar-category[aria-pressed="true"] {{ color: var(--ink); background: var(--bg-hover); border-left-color: var(--line-strong); font-weight: 600; }}
+    .sidebar-category strong {{ color: var(--ink-3); font-size: .76rem; font-weight: 500; }}
+    .archive-page {{ min-height: calc(100vh - var(--bar-h)); background: var(--surface); }}
     .archive-main {{ width: min(100%, 1040px); margin: 0 auto; padding: 38px 34px 76px; }}
     .archive-head {{ display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding-bottom: 25px; border-bottom: 1px solid var(--rule-strong); }}
-    .section-kicker {{ margin: 0 0 7px; color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .06em; }}
-    .archive-head h1 {{ margin: 0; color: var(--ink-strong); font-size: clamp(2rem, 5vw, 3.35rem); line-height: 1.05; letter-spacing: -.04em; }}
+    .section-kicker {{ margin: 0 0 7px; color: var(--ink-3); font-size: .72rem; font-weight: 600; letter-spacing: .06em; font-family: var(--font-mono); }}
+    .archive-head h1 {{ margin: 0; color: var(--ink); font-size: clamp(1.8rem, 4vw, 2.6rem); line-height: 1.1; letter-spacing: -.03em; }}
     .archive-summary {{ max-width: 560px; margin: 10px 0 0; color: var(--muted); font-size: .86rem; }}
-    .archive-updated {{ flex: 0 0 auto; margin: 0; color: var(--faint); font: .72rem var(--font-mono); white-space: nowrap; }}
-    .archive-filters {{ position: sticky; top: 72px; z-index: 20; display: flex; gap: 7px; margin: 0 -4px 24px; padding: 14px 4px; overflow-x: auto; background: var(--surface); border-bottom: 1px solid var(--rule); scrollbar-width: thin; }}
-    .archive-filters .archive-filter {{ flex: 0 0 auto; min-height: 34px; padding: 6px 10px; border: 1px solid var(--rule-strong); border-radius: 5px; background: transparent; color: var(--muted); font-size: .76rem; white-space: nowrap; }}
-    .archive-filters .archive-filter:hover {{ color: var(--ink); border-color: var(--accent); }}
-    .archive-filters .archive-filter[aria-pressed="true"] {{ color: #04171d; background: var(--accent-bright); border-color: var(--accent-bright); font-weight: 670; }}
+    .archive-updated {{ flex: 0 0 auto; margin: 0; color: var(--ink-3); font: .72rem var(--font-mono); white-space: nowrap; }}
+    .archive-filters {{ position: sticky; top: var(--bar-h); z-index: 20; display: flex; gap: 7px; margin: 0 -4px 24px; padding: 14px 4px; overflow-x: auto; background: var(--surface); border-bottom: 1px solid var(--rule); scrollbar-width: thin; }}
+    .archive-filters .archive-filter {{ flex: 0 0 auto; min-height: 32px; padding: 5px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: .76rem; white-space: nowrap; }}
+    .archive-filters .archive-filter:hover {{ color: var(--ink); border-color: var(--ink-3); }}
+    .archive-filters .archive-filter[aria-pressed="true"] {{ color: var(--surface); background: var(--accent-ink); border-color: var(--accent-ink); font-weight: 600; }}
     .archive-filter span {{ margin-left: 5px; font-family: var(--font-mono); }}
     .date-group {{ display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 32px; border-top: 1px solid var(--rule); }}
     .date-group:first-of-type {{ border-top: 0; }}
-    .date-group h2 {{ position: sticky; top: 142px; align-self: start; margin: 0; padding: 22px 0; color: var(--muted); font: 600 .75rem/1.5 var(--font-mono); }}
+    .date-group h2 {{ position: sticky; top: calc(var(--bar-h) + 70px); align-self: start; margin: 0; padding: 22px 0; color: var(--muted); font: 600 .75rem/1.5 var(--font-mono); }}
     .issue-list {{ min-width: 0; }}
     .issue {{ display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 18px; padding: 21px 0 23px; border-bottom: 1px solid var(--rule); }}
-    .issue-mark {{ padding-top: 3px; color: var(--signal); font: 650 .74rem var(--font-mono); }}
-    .issue-kicker {{ display: flex; flex-wrap: wrap; gap: 8px; color: var(--accent); font-size: .7rem; font-weight: 680; }}
+    .issue-mark {{ padding-top: 3px; color: var(--ink-3); font: 600 .74rem var(--font-mono); }}
+    .issue-kicker {{ display: flex; flex-wrap: wrap; gap: 8px; color: var(--ink-2); font-size: .7rem; font-weight: 600; }}
     .issue-kicker span + span {{ color: var(--muted); font-weight: 520; }}
-    .issue h3 {{ max-width: 720px; margin: 6px 0 9px; color: var(--ink-strong); font-size: 1rem; line-height: 1.36; overflow-wrap: anywhere; }}
+    .issue h3 {{ max-width: 720px; margin: 6px 0 9px; color: var(--ink); font-size: 1rem; line-height: 1.36; overflow-wrap: anywhere; }}
     .issue h3 a {{ text-decoration: none; }}
     .issue-meta {{ display: flex; flex-wrap: wrap; gap: 7px 16px; margin: 0; color: var(--muted); font-size: .72rem; }}
-    .markdown-link {{ color: var(--accent); font-weight: 650; text-decoration: none; }}
+    .markdown-link {{ color: var(--accent-ink); font-weight: 600; text-decoration: none; }}
     .empty, .no-results {{ margin: 36px 0; padding: 34px 0; border-block: 1px solid var(--rule); color: var(--muted); }}
     .no-results {{ display: none; }}
     .archive-footer {{ padding: 18px 34px 28px; border-top: 1px solid var(--rule); color: var(--faint); font-size: .7rem; }}
-    @media (max-width: 960px) {{ .archive-filters {{ top: 64px; }} }}
+    @media (max-width: 960px) {{ .archive-filters {{ top: var(--bar-h); }} }}
     @media (max-width: 720px) {{
       .archive-main {{ padding: 28px 16px 56px; }}
       .archive-head {{ align-items: flex-start; flex-direction: column; gap: 14px; }}

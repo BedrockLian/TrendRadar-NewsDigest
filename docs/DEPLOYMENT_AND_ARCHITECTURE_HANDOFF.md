@@ -122,17 +122,30 @@ scp .\待上传文件 campus-server:/tmp/
 - 旧新闻不会因为页面刷新而重新标为更新；
 - 突发投递状态和去重状态保存在 `output/briefings/.state.json`。
 
-### 3.3 全部新闻
+### 3.3 首页信息架构（工作台）
 
-采集层保留所有当前 RSS 项目，首页“全部新闻”支持：
+首页是**工作台**：先给数据面，再给要读的，最后给要查的。自上而下：
 
-- 关键词搜索；
-- 板块筛选；
-- 来源筛选；
-- 最新/最早排序；
-- 多条件组合；
-- 每次加载 40 条；
-- 筛选和主题偏好保存在浏览器 `localStorage`。
+1. **KPI 行**：台账条目 / 本期新增 / 实质更新 / 待读（待读 = 简报后更新中未标记已读的条数）。
+2. **采集节律条**：采集节律（每 30 分钟 · :00 / :30）、下一轮采集倒计时（按访客本机时间算）、
+   简报窗口与下一期估算、新鲜度窗口。
+3. **突发条**（有命中时）。
+4. **近 7 日入库量**折线（按条目**发布时间**分箱，不是采集时间；图下写明窗口外/无时间/未来时间的条数）
+   与**本轮新增与更新**动态列表。
+5. **最新一期简报**：按板块分组的阅读流，组头给出「配额 N · 入选 M」；本轮无候选的板块在列表末尾
+   用一行说明（名额由其他板块按引擎规则补齐）。板块筛选与 Markdown 下载入口都在这一节。
+6. **简报后更新队列**：本期简报发布后首次出现或内容变化的条目，逐条可标记已读。
+7. **全部新闻台账**：926 条全量，可搜索（标题 / 摘要 / 来源 / 板块）、按板块与状态筛选、
+   三种排序（发布时间 / 板块 / 来源）、每次载入 40 条、逐行标记已读、多源同题标 `×N`、
+   未来发布时间的条目标 `?`。
+8. **导出 Markdown**：导出的是**当前筛选下的全部条目**，不只是已载入的行；可复制或下载 `.md`。
+
+浏览器本地状态（`localStorage`）：`trendradar.read.v1`（已读）、`trendradar.auto`（自动刷新）、
+`trendradar-theme` / `trendradar-sidebar-collapsed`（外观）。已读只在访客本机有效，换设备不跟随。
+
+「新增 / 实质更新」的口径相对**最近一期简报**判定：新增 = 该期发布后首次出现（`first_seen`），
+实质更新 = 同一链接的标题发生变更（`update_detected_at`，见 `engine.py` 的 `status` 判定）。
+页面上的口径说明由渲染器写在数据面提示里，不靠读者猜。
 
 当前生产配置为 52 个 RSS 源，其中科技与 AI 直接来源 8 个，另把 Rest of World 的技术报道映射到
 科技板块。2026-09-12 扩源前最近 8 份简报科技栏为 `2/6/0/4/6/0/4/3`，平均 3.12 篇，只有
@@ -231,8 +244,8 @@ Docker 部署另有其路径：`http.server` 在容器内提供 `/app/public`（
 | `trendradar/core/scheduler.py` | 解析三时段配置，计算 08:00/12:30/20:00 状态和下一次推送 |
 | `trendradar/digest/engine.py` | 观察文章、去重、分类、选稿、突发判断、简报状态、Markdown 存档和公开快照；持有翻译缓存并做投影本地化 |
 | `trendradar/report/html.py` | 首页 HTML 拼装；服务端渲染简报，构建精简载荷与摘要旁车文件 |
-| `trendradar/report/workspace_template.py` | 首页特有的信息架构、内容样式和筛选脚本；共享外壳由 `workspace_theme.py` 注入 |
-| `trendradar/report/workspace_theme.py` | 公开页面唯一的主题令牌、应用外壳、侧栏、顶部栏和深浅主题/抽屉行为来源；也是字体分发的唯一来源（拉丁与数字走 CDN 的 IBM Plex，中文走系统栈，见 §10.3） |
+| `trendradar/report/workspace_template.py` | 首页信息架构、页面级 CSS 与客户端运行时。由设计工作区的 `build-production-ia.py` 从定稿原型生成，**不要手改**；改法见文件头 |
+| `trendradar/report/workspace_theme.py` | 公开页面唯一的主题令牌、应用外壳、侧栏、顶部栏和深浅主题/抽屉行为来源；也是字体分发的唯一来源（拉丁与数字走 CDN 的 IBM Plex，中文走系统栈，见 §10.3）。仪表盘/存档/详情三处共用它 |
 | `trendradar/report/archive.py` | 扫描 Markdown，生成统一存档索引及安全 HTML 阅读页；主程序与发布器共用 |
 | `trendradar/utils/url.py` | URL 规范化与公开 HTTP/HTTPS 外链校验；Digest、首页和详情解析共用 |
 | `deployment/run_once.py` | 用整轮运行锁串行化“采集 → 生成 → 发布” |
@@ -651,7 +664,7 @@ Shell 语法可用 Git for Windows 验证：
 & 'C:\Program Files\Git\usr\bin\sh.exe' -n deployment/run.sh docker/entrypoint.sh
 ```
 
-以上命令与服务器 `ops/precheck.sh` 等价（后者还会验证发布白名单、`serve_public` 与 `RENAME_EXCHANGE`）；`unittest discover` 当前为 **113** 个用例。
+以上命令与服务器 `ops/precheck.sh` 等价（后者还会验证发布白名单、`serve_public` 与 `RENAME_EXCHANGE`）；`unittest discover` 当前为 **123** 个用例（其中 10 个专门钉住首页信息架构：区域存在性、模板标记清零、台账表头与行模板列数一致、载荷的新鲜度字段、板块下标重映射、简报分组与配额、数据面口径文案、节律文案与 `deployment/trendradar-collect.timer` 及 `config/config.yaml` 一致、调色板/强调色/字体栈纪律）。
 
 ### 9.2 公共目录安全验证
 

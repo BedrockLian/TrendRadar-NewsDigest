@@ -338,6 +338,14 @@ class DigestEngine:
         sections_by_name: Dict[str, Dict[str, Any]] = {}
         sources: set[str] = set()
         article_count = 0
+        # The quota travels with the section so the reader page can print
+        # "配额 6 · 入选 6" next to the seats it actually produced — that is the
+        # one number that explains an issue of 20 articles instead of 26.
+        quota_by_name = {
+            str(category.get("NAME")): int(category.get("QUOTA", 0) or 0)
+            for category in self.categories
+            if category.get("NAME")
+        }
         for stat in result.stats:
             titles = []
             for item in stat.get("titles", []):
@@ -359,6 +367,7 @@ class DigestEngine:
                 sections_by_name[name] = {
                     "name": name,
                     "count": len(titles),
+                    "quota": quota_by_name.get(name, 0),
                     "articles": titles,
                 }
                 article_count += len(titles)
@@ -370,7 +379,7 @@ class DigestEngine:
         sections = []
         for name in ordered_names:
             sections.append(
-                sections_by_name.pop(name, {"name": name, "count": 0, "articles": []})
+                sections_by_name.pop(name, {"name": name, "count": 0, "quota": quota_by_name.get(name, 0), "articles": []})
             )
         sections.extend(sections_by_name.values())
         return PublicDigest(

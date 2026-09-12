@@ -18,6 +18,7 @@ from trendradar.report.workspace_theme import (
     THEME_BOOTSTRAP_SCRIPT,
     THEME_CSS,
     render_sidebar,
+    render_topbar,
 )
 from trendradar.utils.url import safe_http_url
 
@@ -32,6 +33,11 @@ _DEFAULT_SLOTS = [
 # it) and are not needed to paint the first screen.  They ship as a sibling
 # JSON file that the browser pulls in right after first paint.
 SUMMARIES_FILENAME = "briefings-summaries.json"
+
+# Both mirror deployment facts the page states out loud; tests/test_homepage.py
+# asserts they still agree with deployment/trendradar-collect.timer.
+REFRESH_SECONDS = 1800          # timer cadence: every :00 and :30
+STALE_AFTER_MINUTES = 90        # three missed rounds before the pill says 陈旧
 
 
 def _safe_json_data(value: Any) -> str:
@@ -245,7 +251,7 @@ def _render_digest(
         current_count = len(snapshot.all_news) if snapshot else fallback_current_count
         return f'''<section class="digest-section" id="digest" aria-labelledby="digest-title">
   <div class="edition-heading empty-heading"><div><p class="section-kicker">最新一期</p><h1 id="digest-title">首期简报正在准备</h1></div><p class="edition-ledger">已采集 {current_count} 篇</p></div>
-  <div class="empty-state"><strong>首期简报将在 {html_escape(next_time)} 生成</strong><span>生成前可在“全部新闻”浏览本轮抓取内容。</span></div>
+  <div class="empty-state"><strong>首期简报将在 {html_escape(next_time)} 生成</strong><span>生成前可在下方“全部新闻台账”浏览本轮抓取内容。</span></div>
 </section>'''
 
     archive_url = _safe_archive_url(digest.archive_url)
@@ -257,20 +263,24 @@ def _render_digest(
     title = html_escape(digest.period_name or "新闻简报")
     title_html = f'<a href="{html_escape(reading_url)}">{title}</a>' if reading_url else title
     filters = [f'<button class="digest-filter" type="button" data-category="all" aria-pressed="true">全部 <span>{digest.article_count}</span></button>']
-    rows = []
-    index = 0
+    groups: List[str] = []
+    gaps: List[str] = []
     for section in digest.sections:
         category = str(section.get("name") or "其他重要新闻")
         count = int(section.get("count") or 0)
-        # A section with nothing in it is not a useful filter; showing "科技与 AI 0"
-        # just adds noise to the chip row.
-        if count > 0:
-            filters.append(
-                f'<button class="digest-filter" type="button" data-category="{html_escape(category)}" aria-pressed="false">'
-                f'{html_escape(category)} <span>{count}</span></button>'
-            )
-        for item in section.get("articles", []):
-            index += 1
+        quota = int(section.get("quota") or 0)
+        # A section that produced no article is reported once, in a single quiet
+        # line, instead of padding the reader with empty group headers.
+        if count <= 0:
+            if quota:
+                gaps.append(f"{html_escape(category)}（配额 {quota}）")
+            continue
+        filters.append(
+            f'<button class="digest-filter" type="button" data-category="{html_escape(category)}" aria-pressed="false">'
+            f'{html_escape(category)} <span>{count}</span></button>'
+        )
+        rows = []
+        for rank, item in enumerate(section.get("articles", []), 1):
             status = str(item.get("status") or "")
             status_label = "突发" if status in {"breaking", "突发"} else "更新" if status in {"updated", "更新"} else ""
             badge = f'<span class="status-badge status-{html_escape(status)}">{status_label}</span>' if status_label else ""
@@ -278,23 +288,74 @@ def _render_digest(
             published = str(item.get("published_at") or "")
             time_html = f'<time datetime="{html_escape(published)}">{html_escape(_display_time(published))}</time>' if published else ""
             rows.append(
-                f'<article class="digest-row" data-category="{html_escape(category)}"><span class="article-number" aria-hidden="true">{index:02d}</span>'
-                f'<span class="digest-state">{badge}</span>'
-                f'<div class="article-copy"><div class="article-heading"><h2>{_external_link(item.get("url", ""), item.get("title", ""))}</h2></div>{summary}</div>'
+                f'<article class="digest-row" data-category="{html_escape(category)}">'
+                f'<span class="article-number" aria-hidden="true">{rank:02d}</span>'
+                f'<div class="article-copy"><div class="article-heading">{badge}'
+                f'<h2>{_external_link(item.get("url", ""), item.get("title", ""))}</h2></div>{summary}</div>'
                 f'<div class="digest-meta"><span class="digest-source">{html_escape(str(item.get("source_name") or "RSS"))}</span>'
                 f'<span class="digest-time">{time_html}</span>'
                 f'<span class="digest-category">{html_escape(category)}</span></div></article>'
             )
+        # The quota is printed next to the seats it produced: that is the one
+        # number that explains why this issue has 20 articles and not 26.
+        quota_html = f'配额 {quota} · 入选 {count}' if quota else f'入选 {count}'
+        groups.append(
+            f'<div class="digest-group" data-category="{html_escape(category)}">'
+            f'<div class="digest-group-head"><h3>{html_escape(category)}</h3>'
+            f'<span class="quota">{quota_html}</span></div>{"".join(rows)}</div>'
+        )
+    gap_html = (
+        f'<p class="digest-gap">本轮没有候选的板块：{"、".join(gaps)}；空缺名额按引擎规则由其他板块补齐。</p>'
+        if gaps else ""
+    )
     created_date = _display_time(digest.created_at, "%Y-%m-%d")
     created_time = _display_time(digest.created_at, "%H:%M")
     return f'''<section class="digest-section" id="digest" aria-labelledby="digest-title">
   <div class="edition-heading"><div><p class="section-kicker">{html_escape(created_date)} · 最新一期</p><h1 id="digest-title">{title_html}</h1></div>
   <div class="edition-actions"><p class="edition-ledger">{digest.article_count} 篇 · {digest.source_count} 个来源 · {html_escape(created_time)} 发布</p>{download}</div></div>
-  <div class="digest-filters" aria-label="筛选本期分类">{"".join(filters)}</div>
-  <div class="digest-table-head" aria-hidden="true"><span>#</span><span>状态</span><span>标题与摘要</span><span>来源</span><span>时间</span><span>分类</span></div>
-  <div class="digest-list">{"".join(rows)}</div>
-  <p class="filter-empty" id="digest-filter-empty" hidden>本期该分类没有新闻。</p>
+  <div class="digest-filters" aria-label="筛选本期板块">{"".join(filters)}</div>
+  <div class="digest-list">{"".join(groups)}</div>
+  {gap_html}
+  <p class="filter-empty" id="digest-filter-empty" hidden>本期该板块没有新闻。</p>
 </section>'''
+
+
+def _render_provenance(
+    snapshot: Optional[HomepageSnapshot],
+    *,
+    total_count: int,
+    source_count: int,
+    category_count: int,
+    update_count: int,
+) -> str:
+    """State where the numbers on this page come from, and on what rule."""
+
+    generated = _display_time(snapshot.generated_at if snapshot else "", "%Y-%m-%d %H:%M") or "未知"
+    parts = [
+        f"<strong>数据面为 {html_escape(generated)} 的线上抓取快照</strong>："
+        f"台账 {total_count} 条 · {source_count} 个来源 · {category_count} 个板块。"
+    ]
+    digest = snapshot.latest_digest if snapshot else None
+    if digest:
+        when = _display_time(digest.created_at, "%m-%d %H:%M")
+        parts.append(
+            f"“新增 / 实质更新”相对最近一期简报（{html_escape(when)} {html_escape(digest.period_name or '')}，"
+            f"共 {digest.article_count} 篇）判定：新增 = 该期发布后首次出现，实质更新 = 同一链接的标题发生变更。"
+            f"简报后更新 {update_count} 条。"
+        )
+    else:
+        parts.append("首期简报尚未生成，“新增”自引擎首次发现时起算。")
+    parts.append(
+        "发布时间由各源 RSS 提供、不是采集时间；晚于本快照时刻的条目在台账里标 "
+        '<span class="mono">?</span>。页面由采集轮次每 30 分钟重新生成一次。'
+    )
+    return "".join(parts)
+
+
+def _render_digest_window(snapshot: Optional[HomepageSnapshot]) -> str:
+    slots = list(snapshot.slots) if snapshot and snapshot.slots else list(_DEFAULT_SLOTS)
+    starts = [str(slot.get("start") or "") for slot in slots if slot.get("start")]
+    return " · ".join(starts) if starts else "08:00 · 12:30 · 20:00"
 
 
 def _render_sidebar_categories(snapshot: Optional[HomepageSnapshot]) -> str:
@@ -369,19 +430,31 @@ def render_html_content(
                 update_indices.append(index)
 
     # The categories array is the dropdown's option list, so the digest's own
-    # section order comes first and any remaining categories follow.
+    # section order comes first and any remaining categories follow.  ``_ci``
+    # was stamped by _prepare_payload against *its* first-appearance order, so
+    # remap it here — otherwise the browser resolves every row's category name
+    # through the wrong index and the ledger labels sections incorrectly.
     categories: List[str] = []
     if homepage_snapshot and homepage_snapshot.latest_digest:
         categories.extend(str(section.get("name") or "其他重要新闻") for section in homepage_snapshot.latest_digest.sections)
     categories.extend(name for name in prepared["categories"] if name not in categories)
+    remap = [categories.index(name) for name in prepared["categories"]]
+    for item in current_items:
+        index = item.get("_ci")
+        if isinstance(index, int) and 0 <= index < len(remap):
+            item["_ci"] = remap[index]
+    generated = _display_time(homepage_snapshot.generated_at if homepage_snapshot else now.isoformat(), "%Y-%m-%d %H:%M")
     payload = _safe_json_data({
         "updates": update_indices,
         "allNews": current_items,
         "categories": categories,
         "sources": prepared["sources"],
+        "generatedAt": str(homepage_snapshot.generated_at if homepage_snapshot else now.isoformat()),
+        "generatedLabel": generated,
+        "staleAfter": STALE_AFTER_MINUTES,
+        "refreshSeconds": REFRESH_SECONDS,
     })
     summaries = _safe_json_data(prepared["summaries"])
-    generated = _display_time(homepage_snapshot.generated_at if homepage_snapshot else now.isoformat(), "%Y-%m-%d %H:%M")
     slots_html = _render_slots(homepage_snapshot)
     sidebar_categories = _render_sidebar_categories(homepage_snapshot)
     generated_date = generated.split(" ", 1)[0]
@@ -394,11 +467,26 @@ def render_html_content(
         <h2>新闻分类</h2>
         <div class="sidebar-categories">{sidebar_categories}</div>
       </section>'''
+    topbar_meta = (
+        '<label class="command-search" for="header-search">'
+        '<i class="bi bi-search" aria-hidden="true"></i>'
+        '<input id="header-search" type="search" autocomplete="off" placeholder="搜索台账"></label>'
+        '<span class="chip-clock" title="采集轮次每 30 分钟一次（:00 / :30），按访客本机时间计算">'
+        '下次采集 <b id="nextCrawl">--:--</b></span>'
+        '<span class="pill-live" id="livePill"><span class="dot" aria-hidden="true"></span>'
+        '<span id="liveText">数据面 · 载入中</span></span>'
+    )
     replacements = {
         "__WORKSPACE_HEAD__": HEAD_ASSETS + "\n" + THEME_BOOTSTRAP_SCRIPT,
         "__WORKSPACE_THEME_CSS__": THEME_CSS,
         "__WORKSPACE_SHELL_CSS__": SHELL_CSS,
         "__WORKSPACE_SHELL_SCRIPT__": SHELL_BEHAVIOR_SCRIPT,
+        "__WORKSPACE_TOPBAR__": render_topbar(
+            title="新闻工作台",
+            icon="broadcast-pin",
+            meta=generated_date,
+            meta_html=topbar_meta,
+        ),
         "__WORKSPACE_SIDEBAR__": render_sidebar(
             root_href="",
             active="digest",
@@ -408,8 +496,15 @@ def render_html_content(
             hide_empty_updates=True,
         ),
         "__ALERTS__": _render_alerts(homepage_snapshot),
-        "__SLOTS__": slots_html,
+        "__PROVENANCE__": _render_provenance(
+            homepage_snapshot,
+            total_count=len(current_items),
+            source_count=len(prepared["sources"]),
+            category_count=len(categories),
+            update_count=len(update_indices),
+        ),
         "__DIGEST__": _render_digest(homepage_snapshot, len(current_items)),
+        "__DIGEST_WINDOW__": _render_digest_window(homepage_snapshot),
         "__AI_ANALYSIS__": _render_ai_analysis(ai_analysis),
         "__UPDATES_HIDDEN__": "" if update_indices else " hidden",
         "__UPDATE_COUNT__": str(len(update_indices)),

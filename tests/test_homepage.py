@@ -314,5 +314,137 @@ class SchedulerPublicationTest(unittest.TestCase):
         self.assertTrue(next(slot["next"] for slot in schedule["slots"] if slot["key"] == "evening_digest"))
 
 
+class WorkbenchInformationArchitectureTest(unittest.TestCase):
+    """The workbench IA: KPI row, cadence strip, ingest chart, feed, queue, ledger."""
+
+    def setUp(self):
+        self.snapshot = make_homepage_snapshot()
+        self.document = render_html_content({}, 0, homepage_snapshot=self.snapshot)
+
+    def payload(self, document=None):
+        match = re.search(r'<script id="homepage-data"[^>]*>(.*?)</script>', document or self.document, re.S)
+        self.assertIsNotNone(match, "homepage-data block is missing")
+        return json.loads(match.group(1))
+
+    def test_each_region_of_the_architecture_renders(self):
+        for marker in (
+            'id="kpis"', 'id="cadence"', 'id="sparkLine"', 'id="feed"', 'id="queueList"',
+            'id="updates"', 'id="all-news"', 'id="db"', 'id="results-count"', 'id="sheet"',
+            'id="provenance"', 'id="news-search"', 'id="news-category"', 'id="news-state"',
+            'id="news-sort"', 'id="load-more"', 'id="autoBtn"', 'id="exportBtn"',
+            'id="refreshBtn"', 'id="livePill"', 'id="nextCrawl"', 'id="nextDigest"',
+        ):
+            self.assertIn(marker, self.document)
+        for fn in ("function renderKpi(", "function renderSpark(", "function renderFeed(",
+                   "function renderQueue(", "function renderRows(", "function toMarkdown("):
+            self.assertIn(fn, self.document)
+        self.assertIn("var PAGE_SIZE = 40", self.document)
+
+    def test_no_template_marker_survives_into_the_page(self):
+        self.assertEqual(re.findall(r"__[A-Z][A-Z_]+__", self.document), [])
+
+    def test_ledger_row_template_matches_the_header_columns(self):
+        head = self.document.split('<div class="db-head">', 1)[1].split('<div class="db-more">', 1)[0]
+        for label in ("读", "标题", "板块", "来源", "发布时间", "状态"):
+            self.assertIn(label, head)
+        row_fn = self.document.split("function rowHtml(x) {", 1)[1].split("function renderRows()", 1)[0]
+        self.assertEqual(row_fn.count('class="db-cell'), 6)
+
+    def test_payload_carries_the_liveness_facts(self):
+        payload = self.payload()
+        self.assertEqual(payload["generatedAt"], "2026-09-10T09:00:00+08:00")
+        self.assertEqual(payload["generatedLabel"], "2026-09-10 09:00")
+        self.assertEqual(payload["staleAfter"], 90)
+        self.assertEqual(payload["refreshSeconds"], 1800)
+
+    def test_category_indices_survive_the_option_list_reorder(self):
+        """The dropdown is ordered by the digest; every ``_ci`` must be remapped."""
+
+        snapshot = make_homepage_snapshot(count=4)
+        snapshot.all_news = [
+            {
+                "title": f"row {index}",
+                "url": f"https://example.com/{index}",
+                "summary": "",
+                "published_at": f"2026-09-10T0{index}:00:00+08:00",
+                "category_id": "b" if index % 2 == 0 else "a",
+                "category_name": "B 板块" if index % 2 == 0 else "A 板块",
+                "status": "new",
+            }
+            for index in range(4)
+        ]
+        # Same two names, opposite order: first appearance (B, A) vs digest order (A, B).
+        snapshot.latest_digest.sections = [
+            {"name": "A 板块", "count": 1, "quota": 3, "articles": []},
+            {"name": "B 板块", "count": 1, "quota": 1, "articles": []},
+        ]
+        payload = self.payload(render_html_content({}, 0, homepage_snapshot=snapshot))
+
+        self.assertEqual(payload["categories"][:2], ["A 板块", "B 板块"])
+        for item in payload["allNews"]:
+            index = int(item["title"].rsplit(" ", 1)[1])
+            expected = "B 板块" if index % 2 == 0 else "A 板块"
+            self.assertEqual(payload["categories"][item["_ci"]], expected)
+
+    def test_digest_reads_as_category_groups_with_quota(self):
+        self.snapshot.latest_digest.sections[0]["quota"] = 6
+        document = render_html_content({}, 0, homepage_snapshot=self.snapshot)
+
+        self.assertIn('class="digest-group" data-category="科技与 AI"', document)
+        self.assertIn('class="digest-group-head"', document)
+        self.assertIn("配额 6 · 入选 1", document)
+        self.assertIn('class="status-badge status-更新"', document)
+        # Numbering restarts inside each group instead of running across the issue.
+        self.assertIn('<span class="article-number" aria-hidden="true">01</span>', document)
+        self.assertNotIn("digest-table-head", document)
+
+    def test_provenance_states_where_the_numbers_come_from(self):
+        self.assertIn("数据面为 2026-09-10 09:00 的线上抓取快照", self.document)
+        self.assertIn("台账 85 条 · 2 个来源 · 2 个板块", self.document)
+        self.assertIn("相对最近一期简报", self.document)
+        self.assertIn("发布时间由各源 RSS 提供、不是采集时间", self.document)
+
+    def test_stated_cadence_matches_the_deployment(self):
+        """Copy that states a deployment fact must not drift away from it."""
+
+        from trendradar.report import html as html_module
+
+        timer = Path("deployment/trendradar-collect.timer").read_text(encoding="utf-8")
+        self.assertIn("OnCalendar=*-*-* *:00,30:00", timer)
+        config = yaml.safe_load(Path("config/config.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(config["rss"]["freshness_filter"]["max_age_days"], 7)
+
+        self.assertEqual(html_module.REFRESH_SECONDS, 1800)
+        self.assertEqual(html_module.STALE_AFTER_MINUTES, 90)
+        self.assertIn("每 30 分钟 · :00 / :30", self.document)
+        self.assertIn("全局 7 天", self.document)
+        self.assertIn("08:00 · 12:30 · 20:00", self.document)
+
+    def test_palette_type_and_accent_come_only_from_the_shared_theme(self):
+        # The only literals are the two browser theme-colour hints, which mirror --bg.
+        self.assertEqual(sorted(set(re.findall(r"#[0-9a-fA-F]{3,6}\b", self.document))), ["#15181c", "#fbfcfd"])
+        # The bright accent is a graphical mark (chart line/dots, live pill) only;
+        # every piece of accent-coloured text uses the darker --accent-ink.
+        self.assertEqual(len(re.findall(r"var\(--accent\)", self.document)), 3)
+        self.assertNotIn("color: var(--accent);", self.document)
+        self.assertIn("var(--accent-ink)", self.document)
+
+    def test_no_serif_and_chinese_never_triggers_a_font_download(self):
+        self.assertNotIn("serif", self.document.replace("sans-serif", ""))
+        # Latin and digits only: 7 subset faces, each range-bounded.
+        self.assertEqual(self.document.count("@font-face"), 7)
+        self.assertEqual(self.document.count("unicode-range:"), 7)
+        self.assertNotIn("U+4E00", self.document)
+
+        ui_stack = self.document.split("--font-ui:", 1)[1].split(";", 1)[0]
+        mono_stack = self.document.split("--font-mono:", 1)[1].split(";", 1)[0]
+        self.assertTrue(ui_stack.rstrip().endswith("sans-serif"), ui_stack)
+        self.assertTrue(mono_stack.rstrip().endswith("sans-serif"), mono_stack)
+        self.assertIn("Microsoft YaHei", ui_stack)
+        # A generic monospace tail resolves to Songti on a Chinese Windows box.
+        self.assertNotIn("ui-monospace,monospace", mono_stack)
+        self.assertIn("Cascadia Mono", mono_stack)
+
+
 if __name__ == "__main__":
     unittest.main()
