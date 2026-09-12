@@ -1,4 +1,18 @@
-"""Shared visual shell for the public TrendRadar workspace pages."""
+"""Shared visual shell for the public TrendRadar workspace pages.
+
+Font delivery rule — one webfont for Latin and digits, nothing for Chinese:
+
+* Latin and digits use Fontsource IBM Plex (``IBM Plex Sans`` / ``IBM Plex Mono``),
+  declared below with a Latin-only ``unicode-range`` so a Chinese character never
+  triggers a font request.  7 files / 135.8 KB total.
+* Chinese always resolves through the system stack (PingFang / Microsoft YaHei /
+  Noto Sans SC / ...).  A CJK webfont would cost one to three orders of magnitude
+  more per weight (self-hosted subset 266 KB, whole package 1.09 MB, Google's
+  sharded ``css2`` 1.91 MB for this site's real character set) for no gain.
+* The monospace stack must end in a CJK sans fallback, never in generic
+  ``monospace``: on a Chinese Windows box Chrome maps generic ``monospace`` to
+  Songti, so digits rendered from that stack come out as serif glyphs.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +20,8 @@ import html
 from typing import Optional
 
 
-HEAD_ASSETS = """  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/inter@5.2.8/index.css">
+HEAD_ASSETS = """  <link rel="preconnect" href="https://registry.npmmirror.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">"""
 
 
@@ -26,6 +40,40 @@ THEME_BOOTSTRAP_SCRIPT = r"""  <script>
 
 
 THEME_CSS = r"""
+    /* ---- 拉丁与数字：Fontsource IBM Plex（仅拉丁子集，版本锁 5.3.0） --------------
+       中文一律走系统栈，所以这些声明的 unicode-range 只覆盖拉丁区段，中文永远
+       不会触发字体请求。每个字重两个源同序降级：主源 registry.npmmirror.com、
+       备源 cdn.jsdelivr.net（同文件字节数逐字重比对过，sha256 一致）。7 个文件
+       合计约 136 KB。这里不再引入 Inter Variable —— 整包第三方 CSS 正是我们要
+       去掉的那类依赖，也是中文页面里最容易被当成默认脸的那种字形。 */
+    @font-face { font-family:'IBM Plex Sans'; font-style:normal; font-weight:400; font-display:swap;
+        src:url('https://registry.npmmirror.com/@fontsource/ibm-plex-sans/5.3.0/files/files/ibm-plex-sans-latin-400-normal.woff2') format('woff2'),
+            url('https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/files/ibm-plex-sans-latin-400-normal.woff2') format('woff2');
+        unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+    @font-face { font-family:'IBM Plex Sans'; font-style:normal; font-weight:500; font-display:swap;
+        src:url('https://registry.npmmirror.com/@fontsource/ibm-plex-sans/5.3.0/files/files/ibm-plex-sans-latin-500-normal.woff2') format('woff2'),
+            url('https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/files/ibm-plex-sans-latin-500-normal.woff2') format('woff2');
+        unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+    @font-face { font-family:'IBM Plex Sans'; font-style:normal; font-weight:600; font-display:swap;
+        src:url('https://registry.npmmirror.com/@fontsource/ibm-plex-sans/5.3.0/files/files/ibm-plex-sans-latin-600-normal.woff2') format('woff2'),
+            url('https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/files/ibm-plex-sans-latin-600-normal.woff2') format('woff2');
+        unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+    @font-face { font-family:'IBM Plex Sans'; font-style:normal; font-weight:700; font-display:swap;
+        src:url('https://registry.npmmirror.com/@fontsource/ibm-plex-sans/5.3.0/files/files/ibm-plex-sans-latin-700-normal.woff2') format('woff2'),
+            url('https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/files/ibm-plex-sans-latin-700-normal.woff2') format('woff2');
+        unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+    @font-face { font-family:'IBM Plex Mono'; font-style:normal; font-weight:400; font-display:swap;
+        src:url('https://registry.npmmirror.com/@fontsource/ibm-plex-mono/5.3.0/files/files/ibm-plex-mono-latin-400-normal.woff2') format('woff2'),
+            url('https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/files/ibm-plex-mono-latin-400-normal.woff2') format('woff2');
+        unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+    @font-face { font-family:'IBM Plex Mono'; font-style:normal; font-weight:600; font-display:swap;
+        src:url('https://registry.npmmirror.com/@fontsource/ibm-plex-mono/5.3.0/files/files/ibm-plex-mono-latin-600-normal.woff2') format('woff2'),
+            url('https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/files/ibm-plex-mono-latin-600-normal.woff2') format('woff2');
+        unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+    @font-face { font-family:'IBM Plex Mono'; font-style:normal; font-weight:700; font-display:swap;
+        src:url('https://registry.npmmirror.com/@fontsource/ibm-plex-mono/5.3.0/files/files/ibm-plex-mono-latin-700-normal.woff2') format('woff2'),
+            url('https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/files/ibm-plex-mono-latin-700-normal.woff2') format('woff2');
+        unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
     :root {
       color-scheme: light;
       --app-bg: #eef3f6;
@@ -46,8 +94,8 @@ THEME_CSS = r"""
       --signal-soft: #ffeaed;
       --focus: #13b9c8;
       --backdrop: rgba(4, 16, 24, .52);
-      --font-ui: "Inter Variable", Inter, "HarmonyOS Sans SC", MiSans, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-      --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+      --font-ui: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, "HarmonyOS Sans SC", MiSans, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --font-mono: "IBM Plex Mono", "Cascadia Mono", "SFMono-Regular", Consolas, ui-monospace, "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
     }
     :root[data-theme="dark"] {
       color-scheme: dark;
