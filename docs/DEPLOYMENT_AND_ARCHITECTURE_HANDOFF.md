@@ -133,6 +133,14 @@ scp .\待上传文件 campus-server:/tmp/
 - 每次加载 40 条；
 - 筛选和主题偏好保存在浏览器 `localStorage`。
 
+当前生产配置为 52 个 RSS 源，其中科技与 AI 直接来源 8 个，另把 Rest of World 的技术报道映射到
+科技板块。2026-09-12 扩源前最近 8 份简报科技栏为 `2/6/0/4/6/0/4/3`，平均 3.12 篇，只有
+2 份填满 6 篇配额；现有科技源最近 24 小时虽抓到 37 条，但 27 条集中于 WIRED 和 Ars Technica，
+OpenAI 官方源仅 3 条。故增加 TechCrunch 官网 Feed、The Verge、Engadget 三个高频编辑媒体，不提高
+总篇数或科技配额。生产同构 canary 分别解析 20、10、20 条，全部在 48 小时内，且与现有文章池的
+规范化 URL 和近似标题重合均为 0。awesome-rss-feeds 中 TechCrunch 的 FeedBurner 旧地址已串源，
+VentureBeat 的 FeedBurner 超过 8 天未更新、官网 Feed 返回 429，均不使用。
+
 浏览器只接收白名单化后的公开字段。链接必须是有效的 `http` 或 `https` URL，动态文字通过 `textContent` 写入，内嵌 JSON 会转义 `</script>`、`&`、U+2028 和 U+2029。
 
 ### 3.4 载荷拆分

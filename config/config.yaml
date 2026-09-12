@@ -246,7 +246,7 @@ rss:
       max_items: 25
       max_age_days: 14
 
-    # 科技与 AI（5）
+    # 科技与 AI（8）：高频编辑媒体为主，OpenAI 仅作为低频一手公告补充
     - id: "ars-technica"
       name: "Ars Technica"
       url: "https://feeds.arstechnica.com/arstechnica/index"
@@ -265,6 +265,18 @@ rss:
       url: "https://www.404media.co/rss/"
       max_items: 20
       max_age_days: 14
+    - id: "techcrunch"
+      name: "TechCrunch"
+      url: "https://techcrunch.com/feed/"
+      max_items: 20
+    - id: "the-verge"
+      name: "The Verge"
+      url: "https://www.theverge.com/rss/index.xml"
+      max_items: 20
+    - id: "engadget"
+      name: "Engadget"
+      url: "https://www.engadget.com/rss.xml"
+      max_items: 20
     - id: "openai-news"
       name: "OpenAI News"
       url: "https://openai.com/news/rss.xml"
@@ -346,7 +358,7 @@ digest:
       name: "科技与 AI"
       quota: 6
       weight: 1.6
-      feeds: ["ars-technica", "mit-technology-review", "wired", "404-media", "openai-news", "rest-of-world"]
+      feeds: ["ars-technica", "mit-technology-review", "wired", "404-media", "techcrunch", "the-verge", "engadget", "openai-news", "rest-of-world"]
       keywords: ["人工智能", "AI", "OpenAI", "模型", "芯片", "robot", "technology", "software"]
 
     - id: "games"

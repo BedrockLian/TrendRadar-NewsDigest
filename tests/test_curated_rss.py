@@ -1,5 +1,8 @@
 """Focused RSS curation regressions; run with unittest discovery."""
 import unittest
+from pathlib import Path
+
+import yaml
 
 from trendradar.core.analyzer import count_rss_frequency, group_rss_stats_by_source
 
@@ -39,6 +42,20 @@ class CuratedRSSTest(unittest.TestCase):
         items = [article("New article", "https://a/1?utm_source=feed")]
         stats = self.analyze(items, new_items=[article("New article", "https://a/1")])
         self.assertTrue(stats[0]["titles"][0]["is_new"])
+
+    def test_technology_canary_feeds_are_configured_and_categorised(self):
+        config = yaml.safe_load(Path("config/config.yaml").read_text(encoding="utf-8"))
+        feeds = {feed["id"]: feed for feed in config["rss"]["feeds"]}
+        expected = {
+            "techcrunch": "https://techcrunch.com/feed/",
+            "the-verge": "https://www.theverge.com/rss/index.xml",
+            "engadget": "https://www.engadget.com/rss.xml",
+        }
+        self.assertEqual({key: feeds[key]["url"] for key in expected}, expected)
+
+        category = next(item for item in config["digest"]["categories"] if item["id"] == "tech_ai")
+        self.assertTrue(set(expected).issubset(category["feeds"]))
+        self.assertTrue(set(category["feeds"]).issubset(feeds))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # TrendRadar 精选 RSS 消息源说明
 
-更新日期：2026-09-09
+更新日期：2026-09-12
 
 这套订阅按用户的阅读目标配置：优先观察中国经济与政策的外部视角，同时覆盖国际政治与外交、社会民生、思想文化、科技与 AI，以及三大主机、Steam 和米哈游游戏新闻。全部热榜和旧 RSS 已从配置中移除。
 
@@ -12,7 +12,7 @@
 - 伊朗和乌克兰采用当地、流亡或跨国调查来源搭配。Iran International 的资金透明度长期有争议，保留它是为了及时性和立场对照；需要与 Bellingcat 及其他国际媒体交叉阅读。
 - 系统会删除完全相同标题和规范化后相同链接的重复项；它不会把同一事件的不同独立报道误判为重复。
 
-## 49 个消息源
+## 52 个消息源
 
 ### 中国经济、政策与国际关系（23）
 
@@ -63,7 +63,7 @@
 | [Aeon](https://aeon.co/feed.rss) | 哲学、历史、科学与社会思想长文 | 不是即时新闻，适合慢读，展示窗口为 30 天 |
 | [The Conversation](https://theconversation.com/global/articles.atom) | 学者署名的社会、政策和研究解读 | 属于专家解释，不等于一手新闻调查 |
 
-### 科技与 AI（5）
+### 科技与 AI（8）
 
 | 来源 | 主要作用 | 阅读时的注意点 |
 | --- | --- | --- |
@@ -71,7 +71,10 @@
 | [MIT Technology Review](https://www.technologyreview.com/feed/) | AI、能源、生物技术及社会影响 | 深度分析较多，部分付费 |
 | [WIRED](https://www.wired.com/feed/rss) | 科技调查、平台权力与数字文化 | 混有产品导购，精选源仍可能出现少量消费科技内容 |
 | [404 Media](https://www.404media.co/rss/) | 互联网平台、隐私、AI 滥用与网络文化调查 | 独立订阅制媒体，部分文章付费 |
-| [OpenAI News](https://openai.com/news/rss.xml) | OpenAI 产品、研究和政策的一手公告 | 厂商自述，不能替代独立评测和调查 |
+| [TechCrunch](https://techcrunch.com/feed/) | AI、创业公司、融资与科技产业快讯 | 高频商业科技媒体；偏创业和融资，需防止同类稿件挤占技术报道 |
+| [The Verge](https://www.theverge.com/rss/index.xml) | 平台政策、消费科技、AI 产品与大型科技公司动态 | 高频综合科技媒体，评论与产品内容较多 |
+| [Engadget](https://www.engadget.com/rss.xml) | 消费电子、软件平台、AI 产品和硬件新闻 | 高频消费科技媒体，评测和导购不等于行业要闻 |
+| [OpenAI News](https://openai.com/news/rss.xml) | OpenAI 产品、研究和政策的一手公告 | 厂商自述且更新较慢，不能替代独立评测和调查 |
 
 ### 电子游戏（10）
 
@@ -95,9 +98,10 @@
 - ChinaFile 的公开订阅只返回 2012 年旧内容；Foreign Affairs、Euractiv、Korea Herald、GamesIndustry.biz 和 Digital Foundry 在服务器上返回 403、404 或无法解析，因此没有放进生产配置。
 - 中国数字时代以转载与存档为主，与“减少重复转载”的目标不合；Japan Today 的通讯社稿比例较高，也未纳入。
 - 任天堂公司的公开 RSS 在测试中最新时间停留在 2019 年，因此采用 Nintendo Life 跟踪任天堂生态，并明确标注其非官方性质。
+- awesome-rss-feeds 中的 TechCrunch FeedBurner 地址已串成旧的营销内容，因此改用官网 `https://techcrunch.com/feed/`；VentureBeat 的 FeedBurner 超过 8 天未更新、官网 Feed 又返回 429，暂不纳入。
 
 ## 当前限制
 
-- 当前没有 AI 服务商配置，网页保留原文标题。TrendRadar 内建翻译只翻译标题，不会自动翻译正文；以后配置服务商后可以开启。
+- AI 翻译会处理外文标题和 RSS 简介；AI 简介另外生成中文概述。供应商拒绝或当轮预算耗尽时会保留原文，并在后续轮次继续回填。
 - 过滤规则针对标题，可屏蔽常见的股票行情、荐股和明星八卦措辞，但无法理解所有语境。媒体偶尔发布的非目标内容仍可能出现。
 - “同一事件”不等于“重复报道”。系统只去掉相同链接或相同规范化标题，保留不同媒体的独立调查、事实补充和观点差异。
