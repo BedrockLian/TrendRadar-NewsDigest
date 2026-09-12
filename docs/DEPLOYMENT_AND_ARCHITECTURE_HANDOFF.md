@@ -836,6 +836,13 @@ Docker CLI 在当前 Windows 开发机不可用，因此本地没有执行完整
 - 部署前用设计工作区的检查脚本在**真实数据**上跑过两页：生产渲染器 + 线上 926 条快照 →
   `production-workbench-preview.html` / `production-overview-preview.html`，脚本（最小 DOM stub）
   实跑页面脚本：首页 40 行台账、读数页 KPI 926/101/13/114、折线 7 点、动态 8 行，均无异常；
+- 部署后：01:00 那轮采集（01:00:01 → 01:03:35，`Result=success`，翻译 40/40）重新生成两页并发布，
+  `public/overview/index.html` 330594 B、其 `.gz` 100303 B；线上逐项核对 **60/60 通过**
+  （脚本见设计工作区的 `verify-live-readings.py`）：首页区块顺序 meta → 简报 → 队列 → 台账、
+  无折叠块与读数元素、`.db` 规则为 `overflow: clip` 且 `.db-head` 仍 `position: sticky; top: var(--bar-h)`、
+  `/overview/` 200 且含全部读数元素、不含台账/队列/导出元素、只有一个 `<h1>` 与一个实心按钮、
+  侧栏在首页与 `/briefings/` 都能指到 `../overview/`、`/overview/` 把自己标为当前页、
+  四个私有路径仍 404；
 - 回滚：`git revert 6c63b574` 后等下一轮采集重新生成（上一版为 `ea11c7c0`，见 §10.5）；源码备份
   `/opt/trendradar-src-backup-20260913-003136`；
 - 未验证：手机断点与深色主题仍只做静态核对；读数页的 sticky 顶栏在分段截图里会重复出现一次
