@@ -232,7 +232,7 @@ Docker 部署另有其路径：`http.server` 在容器内提供 `/app/public`（
 | `trendradar/digest/engine.py` | 观察文章、去重、分类、选稿、突发判断、简报状态、Markdown 存档和公开快照；持有翻译缓存并做投影本地化 |
 | `trendradar/report/html.py` | 首页 HTML 拼装；服务端渲染简报，构建精简载荷与摘要旁车文件 |
 | `trendradar/report/workspace_template.py` | 首页特有的信息架构、内容样式和筛选脚本；共享外壳由 `workspace_theme.py` 注入 |
-| `trendradar/report/workspace_theme.py` | 公开页面唯一的主题令牌、应用外壳、侧栏、顶部栏和深浅主题/抽屉行为来源 |
+| `trendradar/report/workspace_theme.py` | 公开页面唯一的主题令牌、应用外壳、侧栏、顶部栏和深浅主题/抽屉行为来源；也是字体分发的唯一来源（拉丁与数字走 CDN 的 IBM Plex，中文走系统栈，见 §10.3） |
 | `trendradar/report/archive.py` | 扫描 Markdown，生成统一存档索引及安全 HTML 阅读页；主程序与发布器共用 |
 | `trendradar/utils/url.py` | URL 规范化与公开 HTTP/HTTPS 外链校验；Digest、首页和详情解析共用 |
 | `deployment/run_once.py` | 用整轮运行锁串行化“采集 → 生成 → 发布” |
@@ -741,6 +741,18 @@ Docker CLI 在当前 Windows 开发机不可用，因此本地没有执行完整
 - RSS 扩源至 52：新增 TechCrunch（官网 Feed）、The Verge、Engadget；生产 canary 分别解析 20 / 10 / 20 条，48 小时内有更新，且与存量文章零重合；
 - 部署后连续三轮实测：51/52、52/52、51/52 个源抓取成功，每轮 974～999 条，翻译均 40/40（8.3～9.1 秒），整轮约 3.5 分钟；
 - 全量单元测试 112 个用例通过；生产 `config/config.yaml` 与仓库完全一致。
+
+### 10.3 2026-09-12 第二次发布（字体分发）
+
+- commit `c9df505eb7ffbd40148bd757c2fd085a7143081f`，只改 `trendradar/report/workspace_theme.py`；
+- 去掉第三方 `@fontsource-variable/inter@5.2.8` 样式表，改为 Fontsource IBM Plex（OFL 1.1）：拉丁与数字 7 个字重（sans 400/500/600/700 + mono 400/600/700），每个字重一条 `@font-face`、两条同序 `src`（主源 `registry.npmmirror.com`、备源 `cdn.jsdelivr.net`），`unicode-range` 限定拉丁区段；7 个文件实测合计 135.8 KB；
+- 中文不下载任何字体：`--font-ui` 尾部保留雅黑/苹方/Noto 兜底；`--font-mono` 以 CJK 无衬线兜底收尾，不再以 generic `monospace` 结尾（中文 Windows 上 Chrome 会把 generic monospace 解析成宋体，数字会渲染成衬线字形）；
+- 工作台、简报存档、简报详情三处共用 `HEAD_ASSETS` / `THEME_CSS`，因此一次覆盖全部公开 HTML 页面；
+- 部署前：全量单元测试 113 个用例通过（本地与生产 venv 各一次）、`py_compile` 通过、`precheck.sh` 输出 `PRECHECK: PASS`；archive 两端 sha256 一致（`49da0ca6b8a0772785761eada29edeec88b61cf48493c52a7dda6a0d653782a7`）；
+- 部署后：用生产源码在 `/tmp` 渲染简报存档 14 个页面逐项核对 —— 7 条 `@font-face`、逐条双源降级、逐条 `unicode-range`、无 Inter 引用、两个字体令牌已换；线上 `public/index.html` 在下一轮采集时按新模板重新生成（静态生成的固有行为）；
+- 中文侧的下载量为零：页面上的汉字全部来自访客系统里已有的字体。要改字体只需改 `workspace_theme.py` 一处；换源顺序也是改 `src` 的两行；
+- 回滚：`git revert c9df505eb7ffbd40148bd757c2fd085a7143081f` 后重新生成 archive 并发布（上一版为 `bc69ac1c847f99739e2b9db9c7c7c63cc9912d80`，本机源码备份 `/opt/trendradar-src-backup-20260912-221518`）；
+- 未验证：访客侧的实际取字结果。本机与服务器的 curl 均 200，带 `Origin` 时主源回显 `access-control-allow-origin`、备源为 `*`，但 npmmirror 是 npm 注册表镜像、没有 SLA；要兜底就把这 7 个 woff2 放进自有对象存储再调整 `src` 顺序。
 
 ## 11. 故障定位
 
