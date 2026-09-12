@@ -31,6 +31,7 @@ class PublishStaticTest(unittest.TestCase):
 
     def test_publishes_homepage_and_generated_archive_reading_pages(self):
         self.write("index.html", "<!doctype html><title>Today</title>")
+        self.write("overview/index.html", "<!doctype html><title>运行概览</title>")
         self.write(
             "briefings/2026-09/2026-09-10-0800-morning_digest.md",
             "# 早间新闻简报\n\n> 生成时间：2026-09-10 08:00｜共 1 篇\n",
@@ -53,6 +54,11 @@ class PublishStaticTest(unittest.TestCase):
         self.assertFalse((archive / ".state.json").exists())
         self.assertFalse((archive / "raw.db").exists())
         self.assertFalse((self.public / "rss").exists())
+        # The readings page ships with the homepage: the sidebar links to it
+        # from every page, so a missing copy is a 404 on a live link.
+        readings = self.public / "overview" / "index.html"
+        self.assertTrue(readings.is_file())
+        self.assertIn("运行概览", readings.read_text(encoding="utf-8"))
 
     def test_replaces_stale_archive_files(self):
         self.write("index.html", "new")

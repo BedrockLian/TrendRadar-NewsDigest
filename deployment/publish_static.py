@@ -176,6 +176,16 @@ def publish_static(output_dir: Path, public_dir: Path) -> Path:
             build_index(staged_archive)
             shutil.copy2(source_index, staged / "index.html")
 
+            # The readings page (运行概览) sits one directory down; the sidebar
+            # links to it from every page, so it ships with the homepage or the
+            # link 404s.  The generator writes it in the same run as the
+            # homepage, from the same snapshot.
+            source_overview = output / "overview" / "index.html"
+            if source_overview.is_file() and not source_overview.is_symlink():
+                staged_overview = staged / "overview"
+                staged_overview.mkdir()
+                shutil.copy2(source_overview, staged_overview / "index.html")
+
             # Optional sibling data file holding the article summaries the
             # homepage payload omits.  Whitelisted by exact name only.
             source_summaries = output / SUMMARIES_FILENAME

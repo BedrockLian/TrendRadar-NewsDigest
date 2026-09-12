@@ -310,6 +310,7 @@ def render_sidebar(
                 element_id="updates-nav",
             ),
             _nav_link(f"{root}#all-news" if root else "#all-news", "list-task", "全部新闻", active=active == "all-news", count=total_count),
+            _nav_link(f"{root}overview/" if root else "overview/", "activity", "运行概览", active=active == "overview"),
             _nav_link(f"{root}briefings/" if root else "briefings/", "archive", "简报存档", active=active == "archive"),
         ]
     )

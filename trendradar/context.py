@@ -338,6 +338,7 @@ class AppContext:
             date_folder=self.format_date(),
             time_filename=self.format_time(),
             render_html_func=lambda *args, **kwargs: self.render_html(*args, rss_items=rss_items, rss_new_items=rss_new_items, ai_analysis=ai_analysis, standalone_data=standalone_data, homepage_snapshot=homepage_snapshot, **kwargs),
+            render_overview_func=lambda *args, **kwargs: self.render_html(*args, rss_items=rss_items, rss_new_items=rss_new_items, ai_analysis=ai_analysis, standalone_data=standalone_data, homepage_snapshot=homepage_snapshot, page="overview", **kwargs),
             report_metadata=report_metadata,
             translate_report_func=translate_report_func,
             summaries_writer=lambda output_root: write_summaries_sidecar(
@@ -356,6 +357,7 @@ class AppContext:
         ai_analysis: Optional[Any] = None,
         standalone_data: Optional[Dict] = None,
         homepage_snapshot: Optional[Any] = None,
+        page: str = "home",
     ) -> str:
         """渲染HTML内容"""
         return render_html_content(
@@ -372,6 +374,7 @@ class AppContext:
             show_new_section=self.show_new_section,
             standalone_data=standalone_data,
             homepage_snapshot=homepage_snapshot,
+            page=page,
         )
 
     # === 通知内容渲染 ===

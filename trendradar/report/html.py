@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from trendradar.digest import HomepageSnapshot
 from trendradar.report.helpers import html_escape
+from trendradar.report.overview_template import DOCUMENT as _OVERVIEW_DOCUMENT
 from trendradar.report.workspace_template import DOCUMENT as _DOCUMENT
 from trendradar.report.workspace_theme import (
     HEAD_ASSETS,
@@ -411,8 +412,16 @@ def render_html_content(
     ai_analysis: Optional[Any] = None,
     show_new_section: bool = True,
     homepage_snapshot: Optional[HomepageSnapshot] = None,
+    page: str = "home",
 ) -> str:
-    """Render one dependency-free, responsive HTML document."""
+    """Render one dependency-free, responsive HTML document.
+
+    ``page`` picks the document: ``"home"`` is the workbench (briefing, queue,
+    ledger), ``"overview"`` is the 运行概览 readings page that the sidebar links
+    to.  Both are built from one payload computation, so a KPI on the readings
+    page and the ledger subtitle on the workbench can never disagree.
+    """
+    readings = page == "overview"
     now = get_time_func() if get_time_func else datetime.now().astimezone()
     prepared = _prepare_payload(homepage_snapshot, rss_items)
     current_items = prepared["items"]
@@ -476,23 +485,34 @@ def render_html_content(
         '<span class="pill-live" id="livePill"><span class="dot" aria-hidden="true"></span>'
         '<span id="liveText">数据面 · 载入中</span></span>'
     )
+    if readings:
+        # The readings page has no ledger to search: the top bar keeps only the
+        # countdown and the freshness pill.
+        topbar_meta = (
+            '<span class="chip-clock" title="采集轮次每 30 分钟一次（:00 / :30），按访客本机时间计算">'
+            '下次采集 <b id="nextCrawl">--:--</b></span>'
+            '<span class="pill-live" id="livePill"><span class="dot" aria-hidden="true"></span>'
+            '<span id="liveText">数据面 · 载入中</span></span>'
+        )
     replacements = {
         "__WORKSPACE_HEAD__": HEAD_ASSETS + "\n" + THEME_BOOTSTRAP_SCRIPT,
         "__WORKSPACE_THEME_CSS__": THEME_CSS,
         "__WORKSPACE_SHELL_CSS__": SHELL_CSS,
         "__WORKSPACE_SHELL_SCRIPT__": SHELL_BEHAVIOR_SCRIPT,
         "__WORKSPACE_TOPBAR__": render_topbar(
-            title="新闻工作台",
-            icon="broadcast-pin",
+            title="运行概览" if readings else "新闻工作台",
+            icon="activity" if readings else "broadcast-pin",
             meta=generated_date,
             meta_html=topbar_meta,
         ),
         "__WORKSPACE_SIDEBAR__": render_sidebar(
-            root_href="",
-            active="digest",
+            # The readings page sits one directory down, so its sidebar links
+            # back up; its own entry points at itself, which is harmless.
+            root_href="../" if readings else "",
+            active="overview" if readings else "digest",
             update_count=len(update_indices),
             total_count=len(current_items),
-            extra_html=sidebar_extra,
+            extra_html="" if readings else sidebar_extra,
             hide_empty_updates=True,
         ),
         "__ALERTS__": _render_alerts(homepage_snapshot),
@@ -517,7 +537,7 @@ def render_html_content(
         "__GENERATED_AT__": html_escape(generated),
         "__GENERATED_DATE__": html_escape(generated_date),
     }
-    document = _DOCUMENT
+    document = _OVERVIEW_DOCUMENT if readings else _DOCUMENT
     for marker, value in replacements.items():
         document = document.replace(marker, value)
     return document

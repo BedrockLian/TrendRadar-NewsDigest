@@ -320,6 +320,7 @@ class WorkbenchInformationArchitectureTest(unittest.TestCase):
     def setUp(self):
         self.snapshot = make_homepage_snapshot()
         self.document = render_html_content({}, 0, homepage_snapshot=self.snapshot)
+        self.readings = render_html_content({}, 0, homepage_snapshot=self.snapshot, page="overview")
 
     def payload(self, document=None):
         match = re.search(r'<script id="homepage-data"[^>]*>(.*?)</script>', document or self.document, re.S)
@@ -328,20 +329,19 @@ class WorkbenchInformationArchitectureTest(unittest.TestCase):
 
     def test_each_region_of_the_architecture_renders(self):
         for marker in (
-            'id="kpis"', 'id="cadence"', 'id="sparkLine"', 'id="feed"', 'id="queueList"',
-            'id="updates"', 'id="all-news"', 'id="db"', 'id="results-count"', 'id="sheet"',
-            'id="provenance"', 'id="news-search"', 'id="news-category"', 'id="news-state"',
+            'id="queueList"', 'id="updates"', 'id="all-news"', 'id="db"', 'id="results-count"',
+            'id="sheet"', 'id="news-search"', 'id="news-category"', 'id="news-state"',
             'id="news-sort"', 'id="load-more"', 'id="autoBtn"', 'id="exportBtn"',
-            'id="refreshBtn"', 'id="livePill"', 'id="nextCrawl"', 'id="nextDigest"',
+            'id="refreshBtn"', 'id="livePill"', 'id="nextCrawl"', 'id="updatedAt"',
+            'id="footerTime"',
         ):
             self.assertIn(marker, self.document)
-        for fn in ("function renderKpi(", "function renderSpark(", "function renderFeed(",
-                   "function renderQueue(", "function renderRows(", "function toMarkdown("):
+        for fn in ("function renderQueue(", "function renderRows(", "function toMarkdown("):
             self.assertIn(fn, self.document)
         self.assertIn("var PAGE_SIZE = 40", self.document)
 
-    def test_the_page_opens_on_the_briefing_not_the_dashboard(self):
-        """The dashboard is a folded disclosure: the first screen is news."""
+    def test_the_briefing_owns_the_first_screen(self):
+        """Nothing instrumental sits between the data line and the briefing."""
 
         position = {
             name: self.document.index(marker)
@@ -349,24 +349,27 @@ class WorkbenchInformationArchitectureTest(unittest.TestCase):
                 ("meta", 'class="page-meta"'),
                 ("briefing", 'id="digest"'),
                 ("queue", 'id="updates"'),
-                ("overview", ' id="overview"'),
                 ("ledger", 'id="all-news"'),
             )
         }
         self.assertEqual(
             sorted(position, key=position.get),
-            ["meta", "briefing", "queue", "overview", "ledger"],
+            ["meta", "briefing", "queue", "ledger"],
         )
-        # Closed by default, and nothing the dashboard owns escaped the fold.
-        self.assertIn('<details class="overview" id="overview">', self.document)
-        self.assertNotIn("<details class=\"overview\" id=\"overview\" open", self.document)
-        folded = self.document.split(' id="overview"', 1)[1].split("</details>", 1)[0]
-        for marker in ('id="kpis"', 'id="cadence"', 'id="sparkLine"', 'id="feed"',
-                       'id="provenance"', 'id="nextCrawlAt"'):
-            self.assertIn(marker, folded)
         # The top bar already names the workspace, so the page has one <h1>.
         self.assertNotIn("page-title", self.document)
         self.assertEqual(self.document.count("<h1"), 1)
+
+    def test_the_readings_are_not_rendered_by_the_workbench(self):
+        """KPI row, cadence strip, chart and feed live on their own page now."""
+
+        for marker in ('id="kpis"', 'id="cadence"', 'id="sparkLine"', 'id="feed"',
+                       'id="provenance"', 'id="nextDigest"', "<details"):
+            self.assertNotIn(marker, self.document)
+        for fn in ("function renderKpi(", "function renderSpark(", "function renderFeed(",
+                   "snapshotKpi"):
+            self.assertNotIn(fn, self.document)
+        self.assertIn('href="overview/"', self.document)
 
     def test_no_template_marker_survives_into_the_page(self):
         self.assertEqual(re.findall(r"__[A-Z][A-Z_]+__", self.document), [])
@@ -427,10 +430,12 @@ class WorkbenchInformationArchitectureTest(unittest.TestCase):
         self.assertNotIn("digest-table-head", document)
 
     def test_provenance_states_where_the_numbers_come_from(self):
-        self.assertIn("数据面为 2026-09-10 09:00 的线上抓取快照", self.document)
-        self.assertIn("台账 85 条 · 2 个来源 · 2 个板块", self.document)
-        self.assertIn("相对最近一期简报", self.document)
-        self.assertIn("发布时间由各源 RSS 提供、不是采集时间", self.document)
+        # The provenance callout is part of the readings page now.
+        self.assertIn("数据面为 2026-09-10 09:00 的线上抓取快照", self.readings)
+        self.assertIn("台账 85 条 · 2 个来源 · 2 个板块", self.readings)
+        self.assertIn("相对最近一期简报", self.readings)
+        self.assertIn("发布时间由各源 RSS 提供、不是采集时间", self.readings)
+        self.assertNotIn('id="provenance"', self.document)
 
     def test_stated_cadence_matches_the_deployment(self):
         """Copy that states a deployment fact must not drift away from it."""
@@ -444,9 +449,11 @@ class WorkbenchInformationArchitectureTest(unittest.TestCase):
 
         self.assertEqual(html_module.REFRESH_SECONDS, 1800)
         self.assertEqual(html_module.STALE_AFTER_MINUTES, 90)
-        self.assertIn("每 30 分钟 · :00 / :30", self.document)
-        self.assertIn("全局 7 天", self.document)
-        self.assertIn("08:00 · 12:30 · 20:00", self.document)
+        # The cadence copy lives on the readings page now, and only there.
+        self.assertIn("每 30 分钟 · :00 / :30", self.readings)
+        self.assertIn("全局 7 天", self.readings)
+        self.assertIn("08:00 · 12:30 · 20:00", self.readings)
+        self.assertNotIn("每 30 分钟 · :00 / :30", self.document)
 
     def test_palette_type_and_accent_come_only_from_the_shared_theme(self):
         # The only literals are the two browser theme-colour hints, which mirror --bg.
@@ -472,6 +479,54 @@ class WorkbenchInformationArchitectureTest(unittest.TestCase):
         # A generic monospace tail resolves to Songti on a Chinese Windows box.
         self.assertNotIn("ui-monospace,monospace", mono_stack)
         self.assertIn("Cascadia Mono", mono_stack)
+
+
+class ReadingsPageTest(unittest.TestCase):
+    """运行概览 is a page of its own: same snapshot and tokens, no ledger."""
+
+    def setUp(self):
+        self.snapshot = make_homepage_snapshot()
+        self.document = render_html_content({}, 0, homepage_snapshot=self.snapshot, page="overview")
+        self.workbench = render_html_content({}, 0, homepage_snapshot=self.snapshot)
+
+    def payload(self, document):
+        match = re.search(r'<script id="homepage-data"[^>]*>(.*?)</script>', document, re.S)
+        self.assertIsNotNone(match, "homepage-data block is missing")
+        return json.loads(match.group(1))
+
+    def test_it_renders_the_readings_and_nothing_else(self):
+        for marker in ('id="kpis"', 'id="cadence"', 'id="sparkLine"', 'id="sparkFill"',
+                       'id="sparkNote"', 'id="feed"', 'id="feedCount"', 'id="provenance"',
+                       'id="nextCrawlAt"', 'id="nextCrawlIn"', 'id="nextDigest"',
+                       'id="reloadBtn"', 'id="livePill"', 'id="updatedAt"', 'id="footerTime"',
+                       'id="toast"'):
+            self.assertIn(marker, self.document)
+        for fn in ("function renderKpi(", "function renderSpark(", "function renderFeed(",
+                   "function updateTimes(", "function tickClock("):
+            self.assertIn(fn, self.document)
+        for gone in ('id="db"', 'id="queueList"', 'id="news-search"', 'id="sheet"',
+                     'id="load-more"', 'id="exportBtn"', 'id="header-search"'):
+            self.assertNotIn(gone, self.document)
+        for gone in ("function renderRows(", "function renderQueue(", "function toMarkdown(",
+                     "snapshotKpi"):
+            self.assertNotIn(gone, self.document)
+        # One <h1> (运行概览) and one solid button on the page.
+        self.assertEqual(self.document.count("<h1"), 1)
+        self.assertEqual(self.document.count('class="btn primary'), 1)
+        self.assertIn('id="overview-title">运行概览', self.document)
+        self.assertEqual(re.findall(r"__[A-Z][A-Z_]+__", self.document), [])
+
+    def test_it_reads_the_same_snapshot_as_the_workbench(self):
+        """One payload computation, so a KPI and the ledger subtitle agree."""
+
+        self.assertEqual(self.payload(self.document), self.payload(self.workbench))
+
+    def test_its_sidebar_links_back_up_to_the_workbench(self):
+        for href in ('href="../#digest"', 'href="../#all-news"', 'href="../briefings/"',
+                     'href="../overview/"'):
+            self.assertIn(href, self.document)
+        self.assertIn('href="../overview/" aria-current="page"', self.document)
+        self.assertIn("运行概览", self.document.split('class="topbar-title"', 1)[1][:200])
 
 
 if __name__ == "__main__":

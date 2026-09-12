@@ -155,6 +155,7 @@ def generate_html_report(
     report_metadata: Optional[Dict] = None,
     translate_report_func: Optional[Callable] = None,
     summaries_writer: Optional[Callable[[Path], None]] = None,
+    render_overview_func: Optional[Callable] = None,
 ) -> str:
     """
     生成 HTML 报告
@@ -243,6 +244,14 @@ def generate_html_report(
     # 4. 摘要旁车文件（供首页按需加载）
     if summaries_writer:
         summaries_writer(output_index.parent)
+
+    # 5. 读数页（运行概览）：与首页同一次渲染的快照，落在 output/overview/index.html，
+    #    发布器把它复制到 public/overview/。侧栏链接指向它，所以缺失会在测试里暴露。
+    if render_overview_func:
+        overview_dir = Path(output_dir) / "overview"
+        overview_dir.mkdir(parents=True, exist_ok=True)
+        with open(overview_dir / "index.html", "w", encoding="utf-8") as f:
+            f.write(render_overview_func(report_data, total_titles, mode, update_info))
 
     # 根目录 index.html（供 GitHub Pages 访问）
     root_index = Path("index.html")

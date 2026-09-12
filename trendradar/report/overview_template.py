@@ -1,23 +1,16 @@
 # coding=utf-8
-"""The public workbench page: information architecture, page CSS and runtime.
+"""The 运行概览 readings page: KPI row, cadence strip, ingest chart, round feed.
 
-Generated from the approved prototype (``build-production-ia.py`` in the design
-workspace); edit that script and re-run it rather than hand-editing the markup
-below.  What this file owns:
+Generated from the approved prototype (``build-production-ia.py``); edit that
+script and re-run it rather than hand-editing the markup below.  It shares the
+theme, the page CSS and the data-independent half of the runtime with
+:mod:`trendradar.report.workspace_template`, so the two pages cannot disagree
+about a number: the KPI row, the 7-day window and the cadence copy all come from
+the same payload through the same code.
 
-* the page-level information architecture (latest-edition briefing first, the
-  post-briefing queue, then the 926-row ledger with mark all read + Markdown
-  export).  运行概览 is a page of its own — see
-  :mod:`trendradar.report.overview_template`;
-* page CSS only — the token set, the font delivery and the sidebar/topbar shell
-  come from :mod:`trendradar.report.workspace_theme`, so the archive and detail
-  pages cannot drift away from it;
-* the client runtime, which reads the real snapshot rendered into
-  ``#homepage-data`` by :mod:`trendradar.report.html`.
-
-Deployment constants stated in the copy mirror ``config/config.yaml`` and
-``deployment/trendradar-collect.timer``; ``tests/test_homepage.py`` asserts they
-still agree.
+What this file owns: the page body (data provenance, KPI row, cadence strip,
+7-day ingest chart, this round's new-and-updated feed) and the bootstrap that
+renders those blocks only — no ledger, no queue, no export.
 """
 DOCUMENT = r'''<!doctype html>
 <html lang="zh-CN">
@@ -470,85 +463,72 @@ __WORKSPACE_TOPBAR__
         <span>数据面 <strong class="mono">__GENERATED_AT__</strong></span>
         <span class="sep">·</span>
         <span id="updatedAt">刚刚刷新</span>
-        <span class="sep">·</span>
-        <span id="queueSummary">__UPDATE_COUNT__ 条待读</span>
         <span style="flex:1"></span>
-        <button class="btn ghost" id="autoBtn" type="button" title="按采集节律定时重载本页（默认关闭）">
-          <span class="ico" aria-hidden="true">◷</span><span id="autoLbl">自动刷新 · 关</span>
-        </button>
-        <button class="btn ghost" id="exportBtn" type="button" title="把当前筛选结果导出为 Markdown">
-          <span class="ico" aria-hidden="true">↓</span><span>导出 Markdown</span>
-        </button>
-        <button class="btn primary" id="refreshBtn" type="button" title="重新载入这一份已发布的快照；页面由采集轮次每 30 分钟重新生成">
-          <span class="ico" id="refreshIco" aria-hidden="true">↻</span><span>刷新快照</span>
+        <button class="btn primary" id="reloadBtn" type="button" data-od-id="reload-cta" title="重新载入这一份已发布的快照；页面由采集轮次每 30 分钟重新生成">
+          <span class="ico" aria-hidden="true">↻</span><span>刷新快照</span>
         </button>
       </div>
 
-      __ALERTS__
+      <h1 class="h" id="overview-title">运行概览</h1>
+      <div class="h-sub" id="overviewSub">读数页 · 采集节律、近 7 日入库量与本轮新增与更新；简报与台账在工作台。</div>
 
-      __DIGEST__
-      __AI_ANALYSIS__
+          <div class="callout" id="provenance">
+            <span class="tag">数据面</span>
+            <p>__PROVENANCE__</p>
+          </div>
 
-      <section class="queue-section" id="updates" aria-labelledby="updates-title"__UPDATES_HIDDEN__>
-        <div class="queue-head">
-          <h2 id="updates-title">简报后更新</h2>
-          <span class="queue-meta">最近一期简报发布后首次出现或内容变化的条目 · 共 __UPDATE_COUNT__ 条</span>
-        </div>
-        <div class="queue-list" id="queueList"></div>
-      </section>
+          <div class="kpis" id="kpis"></div>
 
-      <section id="all-news" aria-labelledby="all-news-title">
-        <div class="section-heading">
-          <h2 class="h" id="all-news-title">全部新闻台账</h2>
-          <p class="edition-ledger" id="allNewsLedger">__TOTAL_COUNT__ 条 · __SOURCE_COUNT__ 个来源</p>
-        </div>
-        <div class="h-sub" id="ledgerSub">—</div>
+          <div class="strip" id="cadence">
+            <div>
+              <div class="k">采集节律</div>
+              <div class="v">每 30 分钟 · :00 / :30 <span class="sub">48 轮/日</span></div>
+            </div>
+            <div>
+              <div class="k">下一轮采集</div>
+              <div class="v" id="nextCrawlAt">--:-- <span class="sub" id="nextCrawlIn">按 :00 / :30 计算</span></div>
+            </div>
+            <div>
+              <div class="k">简报窗口</div>
+              <div class="v">__DIGEST_WINDOW__ <span class="sub" id="nextDigest">下一期 --</span></div>
+            </div>
+            <div>
+              <div class="k">新鲜度窗口</div>
+              <div class="v">全局 7 天 <span class="sub">单源 14 / 30 / 90 天覆盖</span></div>
+            </div>
+          </div>
 
-        <div class="tools">
-          <div class="field">
-            <label for="news-search">搜索</label>
-            <input type="search" id="news-search" placeholder="标题、摘要或来源" autocomplete="off">
-          </div>
-          <div class="field">
-            <label for="news-category">板块</label>
-            <select id="news-category"><option value="">全部</option>__CATEGORY_OPTIONS__</select>
-          </div>
-          <div class="field">
-            <label for="news-state">状态</label>
-            <select id="news-state">
-              <option value="">全部</option>
-              <option value="unread">未读</option>
-              <option value="new">新增</option>
-              <option value="upd">实质更新</option>
-              <option value="old">既有</option>
-              <option value="read">已读</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="news-sort">排序</label>
-            <select id="news-sort">
-              <option value="time">发布时间</option>
-              <option value="cat">板块</option>
-              <option value="src">来源</option>
-            </select>
-          </div>
-          <button class="btn sm" id="reset-filters" type="button">重置</button>
-          <span class="spacer"></span>
-          <span class="result" id="results-count" aria-live="polite">—</span>
-        </div>
+          <div class="two-col">
+            <div class="card">
+              <div class="card-title">
+                <strong>按发布时间 · 近 7 日入库量</strong>
+                <span class="mono" id="sparkSum">—</span>
+              </div>
+              <svg class="spark" viewBox="0 0 600 150" preserveAspectRatio="none" role="img"
+                   aria-label="近 7 日按条目发布时间统计的入库量">
+                <g class="spark-grid">
+                  <line x1="0" y1="20" x2="600" y2="20"></line>
+                  <line x1="0" y1="58" x2="600" y2="58"></line>
+                  <line x1="0" y1="96" x2="600" y2="96"></line>
+                  <line x1="0" y1="120" x2="600" y2="120"></line>
+                </g>
+                <path class="spark-fill" id="sparkFill" d=""></path>
+                <path class="spark-line" id="sparkLine" d=""></path>
+                <g id="sparkDots"></g>
+                <g id="sparkValues"></g>
+                <g id="sparkLabels" class="spark-axis"></g>
+              </svg>
+              <div class="card-note" id="sparkNote"></div>
+            </div>
 
-        <div class="db" id="db">
-          <div class="db-head">
-            <div title="未读 / 已读">读</div>
-            <div>标题</div>
-            <div>板块</div>
-            <div class="db-cell src">来源</div>
-            <div class="db-cell when">发布时间</div>
-            <div>状态</div>
+            <div class="card">
+              <div class="card-title">
+                <strong>本轮新增与更新</strong>
+                <span class="mono" id="feedCount">—</span>
+              </div>
+              <div class="feed" id="feed"></div>
+            </div>
           </div>
-        </div>
-        <div class="db-more"><button class="btn sm" id="load-more" type="button">载入更多</button></div>
-      </section>
 
       <footer class="footer">
         <span>数据来源 <span class="key">RSS 聚合快照</span></span>
@@ -562,25 +542,7 @@ __WORKSPACE_TOPBAR__
 </div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
-
-<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
-  <div class="sheet-panel">
-    <div class="sheet-head">
-      <strong id="sheetTitle">导出 Markdown</strong>
-      <span class="count" id="sheetCount">—</span>
-      <span style="flex:1"></span>
-      <button class="btn ghost sm" id="sheetClose" type="button">关闭</button>
-    </div>
-    <div class="sheet-body"><pre id="sheetText"></pre></div>
-    <div class="sheet-foot">
-      <button class="btn primary sm" id="sheetCopy" type="button">复制</button>
-      <button class="btn sm" id="sheetDl" type="button">下载 .md</button>
-      <span class="hint" id="sheetHint">导出当前筛选下的全部条目，不只是已载入的行。</span>
-    </div>
-  </div>
-</div>
   <script id="homepage-data" type="application/json">__HOMEPAGE_DATA__</script>
-  <script id="summaries-data" type="application/json">__SUMMARIES_DATA__</script>
 __WORKSPACE_SHELL_SCRIPT__
 
 <!-- 工作台运行时 —— 数据来自同行渲染入页的快照，行为一律走真实数据，
@@ -720,91 +682,125 @@ __WORKSPACE_SHELL_SCRIPT__
   function spreadOf(list) { return new Set(list.map(function (x) { return x.s; })).size; }
   function missingTime() { return items.filter(function (x) { return !x.when || isNaN(x.when.getTime()); }).length; }
 
-  /* ---------------- 简报后更新队列 ---------------- */
-  function renderQueue() {
-    var list = queue().sort(function (a, b) {
-      return (b.when && !isNaN(b.when.getTime()) ? b.when.getTime() : -1)
-           - (a.when && !isNaN(a.when.getTime()) ? a.when.getTime() : -1);
+  var KPI_DEFS = [
+    { id: 'kTotal', label: '台账条目', get: function () { return items.length; },
+      delta: function () { return '来自 ' + DATA.sources.length + ' 个来源 · ' + DATA.categories.length + ' 个板块'; } },
+    { id: 'kNew', label: '本期新增', get: countNew,
+      delta: function () {
+        var fresh = items.filter(function (x) { return x.k === 1; });
+        return '最近一期简报之后首次出现 · 覆盖 ' + spreadOf(fresh) + ' 个来源';
+      } },
+    { id: 'kUpd', label: '实质更新', get: countUpd,
+      delta: function () { return '同一链接标题发生变更 · 来自 ' + spreadOf(items.filter(function (x) { return x.k === 2; })) + ' 个来源'; } },
+    { id: 'kUnread', label: '待读', get: countUnread,
+      delta: function () { var n = queue().length; return '简报后更新 ' + n + ' 条 · 已读 ' + (n - countUnread()); } }
+  ];
+  function tweenText(el, from, to, ms) {
+    ms = ms || 500;
+    if (from === to || reduceMotion()) { el.textContent = String(to); return; }
+    var start = performance.now();
+    (function step(now) {
+      var t = Math.min(1, (now - start) / ms);
+      var eased = 1 - Math.pow(1 - t, 3);
+      el.textContent = String(Math.round(from + (to - from) * eased));
+      if (t < 1) requestAnimationFrame(step);
+    })(start);
+  }
+  function renderKpi(keep) {
+    var wrap = $('kpis');
+    if (!wrap.children.length) {
+      wrap.innerHTML = KPI_DEFS.map(function (d) {
+        return '<div class="kpi"><div class="label">' + esc(d.label) + '</div>'
+          + '<div class="value" id="' + esc(d.id) + '">' + d.get() + '</div>'
+          + '<div class="delta" id="' + esc(d.id) + 'D">' + esc(d.delta()) + '</div></div>';
+      }).join('');
+      return;
+    }
+    KPI_DEFS.forEach(function (d) {
+      var cell = $(d.id), dl = $(d.id + 'D');
+      if (!cell) return;
+      var after = d.get();
+      if (keep) { tweenText(cell, Number(cell.textContent), after); }
+      else { cell.textContent = String(after); }
+      if (dl) dl.textContent = d.delta();
     });
-    $('queueSummary').textContent = countUnread() + ' / ' + list.length + ' 条待读';
-    var body = list.slice(0, 40).map(function (it) {
-      var done = read[it.i] ? ' done' : '';
-      return '<div class="queue-row' + done + '">'
-        + '<input class="rd" type="checkbox" data-i="' + it.i + '"' + (read[it.i] ? ' checked' : '')
-        + ' aria-label="标记已读：' + esc(it.t) + '">'
-        + '<div class="q-body"><a class="q-title" href="' + esc(it.u) + '" target="_blank" rel="noopener noreferrer">'
-        + esc(it.t) + '</a><span class="q-src">' + esc(it.s) + ' · ' + STATE_LABEL[it.k] + '</span></div>'
-        + '<div class="q-when">' + esc(fmtWhen(it.when)) + '</div></div>';
+  }
+
+  /* ---------------- 近 7 日入库量 ---------------- */
+  function dailySeries() {
+    var days = [];
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    for (var back = 6; back >= 0; back--) {
+      days.push(new Date(today.getTime() - back * 864e5));
+    }
+    var buckets = days.map(function (d) {
+      return { key: pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()), n: 0, t: d.getTime() };
+    });
+    var older = 0, future = 0;
+    items.forEach(function (x) {
+      if (!x.when || isNaN(x.when.getTime())) return;
+      var day = new Date(x.when.getTime());
+      day.setHours(0, 0, 0, 0);
+      var hit = null;
+      for (var i = 0; i < buckets.length; i++) { if (buckets[i].t === day.getTime()) { hit = buckets[i]; break; } }
+      if (hit) hit.n += 1;
+      else if (day.getTime() > buckets[buckets.length - 1].t) future += 1;
+      else older += 1;
+    });
+    return { buckets: buckets, older: older, future: future };
+  }
+  function renderSpark() {
+    var s = dailySeries();
+    var W = 600, H = 150, padL = 26, padR = 18, padT = 18, padB = 30;
+    var series = s.buckets.map(function (b) { return b.n; });
+    var labels = s.buckets.map(function (b) { return b.key; });
+    var max = Math.max.apply(null, series.concat([1]));
+    var stepX = (W - padL - padR) / (series.length - 1);
+    function y(v) { return padT + (1 - v / (max * 1.15)) * (H - padT - padB); }
+    var pts = series.map(function (v, i) { return [padL + i * stepX, y(v)]; });
+    var line = 'M ' + pts.map(function (p) { return p[0].toFixed(1) + ' ' + p[1].toFixed(1); }).join(' L ');
+    $('sparkLine').setAttribute('d', line);
+    $('sparkFill').setAttribute('d', line + ' L ' + pts[pts.length - 1][0].toFixed(1) + ' ' + (H - padB)
+      + ' L ' + pts[0][0].toFixed(1) + ' ' + (H - padB) + ' Z');
+    $('sparkDots').innerHTML = pts.map(function (p) {
+      return '<circle class="spark-dot" cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="2.6"></circle>';
     }).join('');
-    if (list.length > 40) body += '<div class="queue-empty">另有 ' + (list.length - 40) + ' 条，请在下方台账按「未读」筛选查看。</div>';
-    $('queueList').innerHTML = body || '<div class="queue-empty">没有待读条目。</div>';
+    $('sparkValues').innerHTML = pts.map(function (p, i) {
+      return '<text class="spark-val" x="' + p[0].toFixed(1) + '" y="' + (p[1] - 8).toFixed(1)
+        + '" text-anchor="middle">' + series[i] + '</text>';
+    }).join('');
+    $('sparkLabels').innerHTML = labels.map(function (d, i) {
+      return '<text x="' + (padL + i * stepX).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle">' + d + '</text>';
+    }).join('');
+    var total = series.reduce(function (a, b) { return a + b; }, 0);
+    $('sparkSum').textContent = total + ' 条';
+    var missing = missingTime();
+    var note = '按条目发布时间分箱，近 7 日共 ' + total + ' 条；另有 ' + s.older + ' 条早于窗口、'
+      + missing + ' 条没有发布时间';
+    if (s.future) note += '、' + s.future + ' 条源给出的时间晚于快照日';
+    note += '。末段为不完整日。发布时间由 RSS 提供，不是采集时间。';
+    $('sparkNote').textContent = note;
   }
 
-  /* ---------------- 台账 ---------------- */
-  function searchBlob(x) {
-    var s = SUMS[x.i] || '';
-    return (x.t + ' ' + s + ' ' + x.s + ' ' + x.c).toLowerCase();
-  }
-  function filtered() {
-    var q = $('news-search').value.trim().toLowerCase();
-    var cat = $('news-category').value;
-    var state = $('news-state').value;
-    var sort = $('news-sort').value;
-    var out = items.filter(function (x) {
-      if (q && searchBlob(x).indexOf(q) === -1) return false;
-      if (cat && x.c !== cat) return false;
-      if (state === 'unread' && (!x.q || read[x.i])) return false;
-      if (state === 'read' && (!x.q || !read[x.i])) return false;
-      if (state === 'new' && x.k !== 1) return false;
-      if (state === 'upd' && x.k !== 2) return false;
-      if (state === 'old' && x.k !== 0) return false;
-      return true;
-    });
-    function tn(x) { return (x.when && !isNaN(x.when.getTime())) ? x.when.getTime() : -1; }
-    if (sort === 'time') out.sort(function (a, b) { return tn(b) - tn(a); });
-    else if (sort === 'cat') out.sort(function (a, b) { return a.c.localeCompare(b.c, 'zh') || tn(b) - tn(a); });
-    else out.sort(function (a, b) { return a.s.localeCompare(b.s, 'en') || tn(b) - tn(a); });
-    return out;
-  }
-  var dupCount = (function () {
-    var m = {};
-    items.forEach(function (x) { m[x.t] = (m[x.t] || 0) + 1; });
-    return m;
-  })();
-
-  function rowHtml(x) {
-    var future = x.when && !isNaN(x.when.getTime()) && x.when.getTime() > Date.now();
-    var when = x.when && !isNaN(x.when.getTime())
-      ? '<span' + (future ? ' class="future" title="源给出的发布时间晚于快照时刻，不是采集时间"' : '') + '>'
-        + esc(fmtWhen(x.when)) + (future ? ' ?' : '') + '</span>'
-      : '—';
-    return '<div class="db-row">'
-      + '<div class="db-cell"><input class="rd" type="checkbox" data-i="' + x.i + '"'
-      + (read[x.i] ? ' checked' : '') + ' aria-label="标记已读：' + esc(x.t) + '"></div>'
-      + '<div class="db-cell title"><a href="' + esc(x.u) + '" target="_blank" rel="noopener noreferrer" title="'
-      + esc(x.t) + '">' + esc(x.t) + '</a>'
-      + (dupCount[x.t] > 1 ? '<span class="dup" title="同一标题在台账内出现 ' + dupCount[x.t] + ' 次（多源同题）">×'
-        + dupCount[x.t] + '</span>' : '') + '</div>'
-      + '<div class="db-cell">' + esc(x.c) + '</div>'
-      + '<div class="db-cell src">' + esc(x.s) + '</div>'
-      + '<div class="db-cell when">' + when + '</div>'
-      + '<div class="db-cell"><span class="pill ' + STATE_CLASS[x.k] + '">' + STATE_LABEL[x.k] + '</span></div>'
-      + '</div>';
-  }
-  function renderRows() {
-    var list = filtered();
-    var shown = list.slice(0, loaded);
-    var db = $('db');
-    Array.prototype.slice.call(db.querySelectorAll('.db-row')).forEach(function (n) { n.remove(); });
-    db.insertAdjacentHTML('beforeend', shown.length
-      ? shown.map(rowHtml).join('')
-      : '<div class="db-empty">当前筛选没有匹配条目。换个关键词，或把状态切回「全部」。</div>');
-    $('results-count').textContent = shown.length + ' / ' + list.length + ' 条';
-    $('ledgerSub').textContent = '台账 ' + items.length + ' 条 · 本期新增 ' + countNew() + ' · 实质更新 '
-      + countUpd() + ' · 待读 ' + countUnread() + '；每行左侧可标记已读，标题点开原文。';
-    var more = $('load-more');
-    more.style.display = list.length > shown.length ? '' : 'none';
-    more.textContent = '载入更多（剩余 ' + Math.max(0, list.length - shown.length) + '）';
+  /* ---------------- 本轮新增与更新 ---------------- */
+  function renderFeed() {
+    var pool = items.filter(function (x) { return x.k !== 0; })
+      .sort(function (a, b) {
+        return (b.when && !isNaN(b.when.getTime()) ? b.when.getTime() : -1)
+             - (a.when && !isNaN(a.when.getTime()) ? a.when.getTime() : -1);
+      });
+    var show = pool.slice(0, 8);
+    $('feed').innerHTML = show.length ? show.map(function (it) {
+      return '<div class="feed-row">'
+        + '<span class="av" style="background:' + esc(srcColor(it.s)) + '">' + esc(srcInitial(it.s)) + '</span>'
+        + '<div class="body"><span class="who">' + esc(it.s) + '</span>'
+        + '<span class="mono" style="font-size:11px;color:var(--ink-2)"> ' + STATE_LABEL[it.k] + '</span>'
+        + '<a class="t" href="' + esc(it.u) + '" target="_blank" rel="noopener noreferrer"'
+        + (it.u ? '' : ' aria-disabled="true"') + '>' + esc(it.t) + '</a></div>'
+        + '<div class="time">' + esc(fmtWhen(it.when)) + '</div></div>';
+    }).join('') : '<div class="empty">最近一期简报之后没有新增或实质更新的条目。</div>';
+    $('feedCount').textContent = pool.length + ' 条 · 显示最近 ' + show.length;
   }
 
   /* ---------------- 顶栏：下一轮采集 / 新鲜度 ---------------- */
@@ -862,142 +858,13 @@ __WORKSPACE_SHELL_SCRIPT__
     if (msg) showToast(msg);
     setTimeout(function () { window.location.reload(); }, 220);
   }
-  /* ---------------- 交互 ---------------- */
-
-  function toMarkdown() {
-    var list = filtered();
-    var q = $('news-search').value.trim();
-    var cat = $('news-category').value;
-    var state = $('news-state').value || '全部';
-    var stateLabel = { unread: '未读', read: '已读', new: '新增', upd: '实质更新', old: '既有', '全部': '全部' }[state];
-    var lines = [];
-    lines.push('# TrendRadar · 全部新闻台账');
-    lines.push('');
-    lines.push('- 数据面：' + (DATA.generatedLabel || DATA.generatedAt || '未知') + ' 的线上抓取快照');
-    lines.push('- 筛选：关键词「' + (q || '—') + '」· 板块「' + (cat || '全部') + '」· 状态「' + stateLabel + '」');
-    lines.push('- 命中：' + list.length + ' / ' + items.length + ' 条 · 导出于 '
-      + new Date().toLocaleString('zh-CN', { hour12: false }));
-    lines.push('');
-    var order = [];
-    list.forEach(function (x) { if (order.indexOf(x.c) === -1) order.push(x.c); });
-    order.forEach(function (name) {
-      var rows = list.filter(function (x) { return x.c === name; });
-      lines.push('', '## ' + name + '（' + rows.length + ' 条）');
-      rows.forEach(function (x) {
-        lines.push('- ' + (read[x.i] ? '[x]' : '[ ]') + ' ' + x.t.replace(/[[\]]/g, '')
-          + ' — ' + x.s + ' · ' + (x.when && !isNaN(x.when.getTime()) ? fmtWhen(x.when) : '无发布时间')
-          + ' · ' + STATE_LABEL[x.k] + (x.u ? ' · <' + x.u + '>' : ''));
-      });
-    });
-    if (!list.length) lines.push('', '_当前筛选没有匹配条目。_');
-    return lines.join('\n');
-  }
-  function openSheet() {
-    $('sheetText').textContent = toMarkdown();
-    $('sheetCount').textContent = filtered().length + ' 条';
-    $('sheet').classList.add('open');
-  }
-
-  $('refreshBtn').addEventListener('click', function () { reloadPage('正在重新载入快照…'); });
-  $('exportBtn').addEventListener('click', openSheet);
-  $('sheetClose').addEventListener('click', function () { $('sheet').classList.remove('open'); });
-  $('sheet').addEventListener('click', function (e) { if (e.target === $('sheet')) $('sheet').classList.remove('open'); });
-  $('sheetCopy').addEventListener('click', function () {
-    var text = $('sheetText').textContent;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(function () { showToast('已复制 Markdown'); },
-        function () { showToast('浏览器拒绝了剪贴板写入，请手动选择文本复制'); });
-    } else { showToast('当前浏览器不支持剪贴板写入，请手动选择文本复制'); }
-  });
-  $('sheetDl').addEventListener('click', function () {
-    var blob = new Blob([$('sheetText').textContent], { type: 'text/markdown;charset=utf-8' });
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'trendradar-ledger-' + new Date().toISOString().slice(0, 10) + '.md';
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
-  });
-  $('autoBtn').addEventListener('click', function () {
-    autoOn = !autoOn;
-    $('autoLbl').textContent = '自动刷新 · ' + (autoOn ? '开' : '关');
-    LS.setItem('trendradar.auto', String(autoOn));
-    if (autoOn) { startAuto(); showToast('已开启自动刷新：每 ' + Math.round(REFRESH_SECONDS / 60) + ' 分钟重载一次'); }
-    else { stopAuto(); }
-  });
-  function startAuto() {
-    stopAuto();
-    autoTimer = setInterval(function () { reloadPage('自动刷新…'); }, Math.max(60, REFRESH_SECONDS) * 1000);
-  }
-  function stopAuto() { if (autoTimer) clearInterval(autoTimer); autoTimer = null; }
-
-  document.addEventListener('change', function (e) {
-    var t = e.target;
-    if (!t.classList || !t.classList.contains('rd')) return;
-    var i = Number(t.dataset.i);
-    if (t.checked) read[i] = true; else delete read[i];
-    LS.setItem(readKey, JSON.stringify(Object.keys(read).map(Number)));
-    renderQueue(); renderRows();
-  });
-  $('news-search').addEventListener('input', function () {
-    loaded = PAGE_SIZE; renderRows();
-    if ($('header-search')) $('header-search').value = $('news-search').value;
-  });
-  ['news-category', 'news-state', 'news-sort'].forEach(function (id) {
-    $(id).addEventListener('change', function () { loaded = PAGE_SIZE; renderRows(); });
-  });
-  $('reset-filters').addEventListener('click', function () {
-    $('news-search').value = '';
-    if ($('header-search')) $('header-search').value = '';
-    $('news-category').value = ''; $('news-state').value = ''; $('news-sort').value = 'time';
-    loaded = PAGE_SIZE; renderRows();
-  });
-  $('load-more').addEventListener('click', function () { loaded += PAGE_SIZE; renderRows(); });
-  document.addEventListener('keydown', function (ev) {
-    if (ev.target && (ev.target.tagName === 'INPUT' || ev.target.tagName === 'SELECT')) return;
-    if (ev.key === '/') { ev.preventDefault(); $('news-search').focus(); }
-    if (ev.key === 'Escape') $('sheet').classList.remove('open');
-  });
-  /* 侧栏的“新闻分类”按钮沿用同一套筛选语义：点一次把台账与简报一起收窄。 */
-  Array.prototype.slice.call(document.querySelectorAll('.digest-filter')).forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var want = btn.dataset.category || '';
-      Array.prototype.slice.call(document.querySelectorAll('.digest-filter')).forEach(function (b) {
-        b.setAttribute('aria-pressed', String(b === btn));
-      });
-      Array.prototype.slice.call(document.querySelectorAll('.digest-row')).forEach(function (row) {
-        var show = !want || want === 'all' || row.dataset.category === want;
-        row.hidden = !show;
-      });
-      Array.prototype.slice.call(document.querySelectorAll('.digest-group')).forEach(function (group) {
-        var rows = group.querySelectorAll('.digest-row');
-        var any = false;
-        Array.prototype.forEach.call(rows, function (r) { if (!r.hidden) any = true; });
-        group.hidden = !any;
-      });
-      var empty = $('digest-filter-empty');
-      if (empty) {
-        var visible = document.querySelectorAll('.digest-row:not([hidden])').length;
-        empty.hidden = visible > 0;
-      }
-      if (want && want !== 'all') {
-        $('news-category').value = want;
-        loaded = PAGE_SIZE; renderRows();
-      }
-    });
-  });
-
-  /* ---------------- 起手 ---------------- */
-  if (autoOn) { $('autoLbl').textContent = '自动刷新 · 开'; startAuto(); }
-  renderQueue(); renderRows(); tickClock(); updateTimes();
+  /* ---------------- 起手：读数页只渲染读数 ---------------- */
+  renderKpi(false); renderSpark(); renderFeed(); tickClock(); updateTimes();
   setInterval(updateTimes, 5000);
   setInterval(tickClock, 1000);
-  /* 摘要随 `briefings-summaries.json` 单独取一次：首屏不等它，落地后重排一次搜索索引。 */
-  if (SUMMARIES_URL && window.fetch) {
-    fetch(SUMMARIES_URL, { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (list) {
-        if (Array.isArray(list) && list.length === items.length) { SUMS = list; renderRows(); }
-      }).catch(function () {});
-  }
+  /* 不接台账与队列：刷新就是重读这一份已发布的快照。 */
+  var reloadBtn = $('reloadBtn');
+  if (reloadBtn) reloadBtn.addEventListener('click', function () { reloadPage('正在重读这一份快照…'); });
 })();
 </script>
 
