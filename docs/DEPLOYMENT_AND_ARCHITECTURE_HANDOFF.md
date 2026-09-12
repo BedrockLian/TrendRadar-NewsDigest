@@ -816,6 +816,31 @@ Docker CLI 在当前 Windows 开发机不可用，因此本地没有执行完整
 - 部署后：等下一轮采集重新生成首页，线上逐项核对开屏顺序与折叠块（本轮检查脚本见设计工作区的 `verify-live-ia.py`）；
 - 回滚：`git revert ea11c7c0` 后等下一轮采集重新生成首页（上一版为 `d996010b`）；
 - 未验证：手机断点与深色主题仍只做静态核对（渲染器视口固定 1080 CSS px）；折叠块在窄屏的换行按静态规则核对。
+### 10.6 2026-09-13 第五次发布（运行概览独立成页 + 表头吸顶修复）
+
+- commit `6c63b574349f70bcca5b479187d314be5b599ee7`（代码；本节记录写在紧随其后的一个纯文档提交里）；
+- 起因两条：① 首页开屏虽然已经是简报，但仪表盘仍折叠在首页里（用户要求「放进侧边栏新开一个页面」）；
+  ② 台账表头显示错误 —— `.db-head` 的 sticky 不生效；
+- 表头根因：`.db` 上的 `overflow: hidden`（本意裁圆角）让 `.db` 自己成了滚动容器，sticky 的参照物
+  从页面变成 `.db`，表头被恒定下推一个 `--bar-h` 压在头两行上（线上截图里行文字被裁成半行）。
+  改为 `overflow: clip`：圆角保留，且 clip 不创建滚动容器。详见 §3.3.1；
+- 运行概览：删掉首页的 `<details id="overview">`，侧栏新增「运行概览」→ `/overview/`，页面体与
+  运行时由生成器在**同一节切开**（`build-production-ia.py` 按运行时自带的 section banner 切分）：
+  读数页拿到 KPI / 折线 / 动态 / 倒计时，首页拿到队列 / 台账 / 导出；`html.py` 用 `page="overview"`
+  选文档，两页共用同一次载荷计算，所以 KPI 与台账小标题不可能对不上；
+- 新增 `trendradar/report/overview_template.py`（生成物）；`generator.py` 多写
+  `output/overview/index.html`，`publish_static.py` 把它复制到 `public/overview/`；
+- 用例：全量 **128** 通过（原 124 + 读数页 3 条 + 发布 1 条新增/改写）；`py_compile` 通过；
+  `git diff --check` 干净；服务器 `PRECHECK: PASS`，archive 两端 sha256 一致
+  （`df4a549393215a0b74ed0128259db8793875ac4c1614925436a921f4bb222696`）；
+- 部署前用设计工作区的检查脚本在**真实数据**上跑过两页：生产渲染器 + 线上 926 条快照 →
+  `production-workbench-preview.html` / `production-overview-preview.html`，脚本（最小 DOM stub）
+  实跑页面脚本：首页 40 行台账、读数页 KPI 926/101/13/114、折线 7 点、动态 8 行，均无异常；
+- 回滚：`git revert 6c63b574` 后等下一轮采集重新生成（上一版为 `ea11c7c0`，见 §10.5）；源码备份
+  `/opt/trendradar-src-backup-20260913-003136`；
+- 未验证：手机断点与深色主题仍只做静态核对；读数页的 sticky 顶栏在分段截图里会重复出现一次
+  （渲染器把高页拼接时的产物，不是页面缺陷）。
+
 ## 11. 故障定位
 
 ### 首页仍是旧版
