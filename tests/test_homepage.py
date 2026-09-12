@@ -315,7 +315,7 @@ class SchedulerPublicationTest(unittest.TestCase):
 
 
 class WorkbenchInformationArchitectureTest(unittest.TestCase):
-    """The workbench IA: KPI row, cadence strip, ingest chart, feed, queue, ledger."""
+    """The workbench IA: briefing first, post-briefing queue, folded 运行概览, ledger."""
 
     def setUp(self):
         self.snapshot = make_homepage_snapshot()
@@ -339,6 +339,34 @@ class WorkbenchInformationArchitectureTest(unittest.TestCase):
                    "function renderQueue(", "function renderRows(", "function toMarkdown("):
             self.assertIn(fn, self.document)
         self.assertIn("var PAGE_SIZE = 40", self.document)
+
+    def test_the_page_opens_on_the_briefing_not_the_dashboard(self):
+        """The dashboard is a folded disclosure: the first screen is news."""
+
+        position = {
+            name: self.document.index(marker)
+            for name, marker in (
+                ("meta", 'class="page-meta"'),
+                ("briefing", 'id="digest"'),
+                ("queue", 'id="updates"'),
+                ("overview", ' id="overview"'),
+                ("ledger", 'id="all-news"'),
+            )
+        }
+        self.assertEqual(
+            sorted(position, key=position.get),
+            ["meta", "briefing", "queue", "overview", "ledger"],
+        )
+        # Closed by default, and nothing the dashboard owns escaped the fold.
+        self.assertIn('<details class="overview" id="overview">', self.document)
+        self.assertNotIn("<details class=\"overview\" id=\"overview\" open", self.document)
+        folded = self.document.split(' id="overview"', 1)[1].split("</details>", 1)[0]
+        for marker in ('id="kpis"', 'id="cadence"', 'id="sparkLine"', 'id="feed"',
+                       'id="provenance"', 'id="nextCrawlAt"'):
+            self.assertIn(marker, folded)
+        # The top bar already names the workspace, so the page has one <h1>.
+        self.assertNotIn("page-title", self.document)
+        self.assertEqual(self.document.count("<h1"), 1)
 
     def test_no_template_marker_survives_into_the_page(self):
         self.assertEqual(re.findall(r"__[A-Z][A-Z_]+__", self.document), [])

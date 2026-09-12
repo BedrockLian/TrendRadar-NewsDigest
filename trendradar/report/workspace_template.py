@@ -5,9 +5,10 @@ Generated from the approved prototype (``build-production-ia.py`` in the design
 workspace); edit that script and re-run it rather than hand-editing the markup
 below.  What this file owns:
 
-* the page-level information architecture (KPI row, collection-cadence strip,
-  7-day ingest chart, new-and-updated feed, briefing reader, post-briefing
-  queue, 926-row ledger with mark all read + Markdown export);
+* the page-level information architecture (latest-edition briefing first, the
+  post-briefing queue, then the collapsed 运行概览 with the KPI row, the
+  collection-cadence strip, the 7-day ingest chart and the new-and-updated feed,
+  then the 926-row ledger with mark all read + Markdown export);
 * page CSS only — the token set, the font delivery and the sidebar/topbar shell
   come from :mod:`trendradar.report.workspace_theme`, so the archive and detail
   pages cannot drift away from it;
@@ -77,8 +78,6 @@ __WORKSPACE_SHELL_CSS__
   }
 
   .page { padding: 40px max(32px, 5vw) 72px; max-width: 1160px; width: 100%; align-self: center; }
-  h1.page-title { font-size: 40px; line-height: 1.15; font-weight: 700;
-                  letter-spacing: -0.01em; margin: 0 0 8px; color: var(--ink); }
 
   .page-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
                color: var(--ink-2); font-size: 13px; margin-bottom: 24px; }
@@ -87,6 +86,25 @@ __WORKSPACE_SHELL_CSS__
                     background: var(--ink); color: var(--surface);
                     display: inline-grid; place-items: center;
                     font-size: 10px; font-weight: 700; font-family: var(--mono); }
+  /* ---------- 运行概览：默认收起的读数区，开屏让给简报 ---------- */
+  .overview { margin: 30px 0 0; border-top: 1px solid var(--line); }
+  .overview > summary { display: flex; align-items: baseline; gap: 10px;
+                        flex-wrap: wrap; padding: 13px 2px; cursor: pointer;
+                        list-style: none; }
+  .overview > summary::-webkit-details-marker { display: none; }
+  .overview > summary:focus-visible { outline: 2px solid var(--accent-ink);
+                                      outline-offset: 2px; }
+  .overview .ov-label { display: inline-flex; align-items: center; gap: 7px;
+                        font-size: 14px; font-weight: 600; color: var(--ink); }
+  .overview .ov-label::before { content: ""; width: 0; height: 0;
+                                border-left: 5px solid var(--ink-3);
+                                border-top: 4px solid transparent;
+                                border-bottom: 4px solid transparent;
+                                transition: transform .15s ease; }
+  .overview[open] .ov-label::before { transform: rotate(90deg); }
+  .overview .ov-sub { color: var(--ink-3); font-size: 12px; }
+  .overview > summary:hover .ov-sub { color: var(--ink-2); }
+  .overview-body { padding: 4px 0 6px; }
 
   .btn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px;
          font-size: 13px; color: var(--ink); background: var(--surface);
@@ -281,7 +299,6 @@ __WORKSPACE_SHELL_CSS__
   }
   @media (max-width: 980px) {
     .page { padding: 28px 18px 64px; }
-    h1.page-title { font-size: 30px; }
     .kpis { grid-template-columns: repeat(2, 1fr); }
     .strip { grid-template-columns: repeat(2, 1fr); }
     .db-head { position: static; }
@@ -461,8 +478,6 @@ __WORKSPACE_SIDEBAR__
 __WORKSPACE_TOPBAR__
 
 <main class="page" id="content">
-      <h1 class="page-title">新闻工作台</h1>
-
       <div class="page-meta">
         <div class="who">TR</div>
         <span>数据面 <strong class="mono">__GENERATED_AT__</strong></span>
@@ -482,65 +497,7 @@ __WORKSPACE_TOPBAR__
         </button>
       </div>
 
-      <div class="callout" id="provenance">
-        <span class="tag">数据面</span>
-        <p>__PROVENANCE__</p>
-      </div>
-
-      <div class="kpis" id="kpis"></div>
-
-      <div class="strip" id="cadence">
-        <div>
-          <div class="k">采集节律</div>
-          <div class="v">每 30 分钟 · :00 / :30 <span class="sub">48 轮/日</span></div>
-        </div>
-        <div>
-          <div class="k">下一轮采集</div>
-          <div class="v" id="nextCrawlAt">--:-- <span class="sub" id="nextCrawlIn">按 :00 / :30 计算</span></div>
-        </div>
-        <div>
-          <div class="k">简报窗口</div>
-          <div class="v">__DIGEST_WINDOW__ <span class="sub" id="nextDigest">下一期 --</span></div>
-        </div>
-        <div>
-          <div class="k">新鲜度窗口</div>
-          <div class="v">全局 7 天 <span class="sub">单源 14 / 30 / 90 天覆盖</span></div>
-        </div>
-      </div>
-
       __ALERTS__
-
-      <div class="two-col">
-        <div class="card">
-          <div class="card-title">
-            <strong>按发布时间 · 近 7 日入库量</strong>
-            <span class="mono" id="sparkSum">—</span>
-          </div>
-          <svg class="spark" viewBox="0 0 600 150" preserveAspectRatio="none" role="img"
-               aria-label="近 7 日按条目发布时间统计的入库量">
-            <g class="spark-grid">
-              <line x1="0" y1="20" x2="600" y2="20"></line>
-              <line x1="0" y1="58" x2="600" y2="58"></line>
-              <line x1="0" y1="96" x2="600" y2="96"></line>
-              <line x1="0" y1="120" x2="600" y2="120"></line>
-            </g>
-            <path class="spark-fill" id="sparkFill" d=""></path>
-            <path class="spark-line" id="sparkLine" d=""></path>
-            <g id="sparkDots"></g>
-            <g id="sparkValues"></g>
-            <g id="sparkLabels" class="spark-axis"></g>
-          </svg>
-          <div class="card-note" id="sparkNote"></div>
-        </div>
-
-        <div class="card">
-          <div class="card-title">
-            <strong>本轮新增与更新</strong>
-            <span class="mono" id="feedCount">—</span>
-          </div>
-          <div class="feed" id="feed"></div>
-        </div>
-      </div>
 
       __DIGEST__
       __AI_ANALYSIS__
@@ -552,6 +509,74 @@ __WORKSPACE_TOPBAR__
         </div>
         <div class="queue-list" id="queueList"></div>
       </section>
+
+      <details class="overview" id="overview">
+        <summary>
+          <span class="ov-label">运行概览</span>
+          <span class="ov-sub">采集节律 · 近 7 日入库量 · 本轮新增与更新 · 数据口径</span>
+        </summary>
+        <div class="overview-body">
+
+          <div class="callout" id="provenance">
+            <span class="tag">数据面</span>
+            <p>__PROVENANCE__</p>
+          </div>
+
+          <div class="kpis" id="kpis"></div>
+
+          <div class="strip" id="cadence">
+            <div>
+              <div class="k">采集节律</div>
+              <div class="v">每 30 分钟 · :00 / :30 <span class="sub">48 轮/日</span></div>
+            </div>
+            <div>
+              <div class="k">下一轮采集</div>
+              <div class="v" id="nextCrawlAt">--:-- <span class="sub" id="nextCrawlIn">按 :00 / :30 计算</span></div>
+            </div>
+            <div>
+              <div class="k">简报窗口</div>
+              <div class="v">__DIGEST_WINDOW__ <span class="sub" id="nextDigest">下一期 --</span></div>
+            </div>
+            <div>
+              <div class="k">新鲜度窗口</div>
+              <div class="v">全局 7 天 <span class="sub">单源 14 / 30 / 90 天覆盖</span></div>
+            </div>
+          </div>
+
+          <div class="two-col">
+            <div class="card">
+              <div class="card-title">
+                <strong>按发布时间 · 近 7 日入库量</strong>
+                <span class="mono" id="sparkSum">—</span>
+              </div>
+              <svg class="spark" viewBox="0 0 600 150" preserveAspectRatio="none" role="img"
+                   aria-label="近 7 日按条目发布时间统计的入库量">
+                <g class="spark-grid">
+                  <line x1="0" y1="20" x2="600" y2="20"></line>
+                  <line x1="0" y1="58" x2="600" y2="58"></line>
+                  <line x1="0" y1="96" x2="600" y2="96"></line>
+                  <line x1="0" y1="120" x2="600" y2="120"></line>
+                </g>
+                <path class="spark-fill" id="sparkFill" d=""></path>
+                <path class="spark-line" id="sparkLine" d=""></path>
+                <g id="sparkDots"></g>
+                <g id="sparkValues"></g>
+                <g id="sparkLabels" class="spark-axis"></g>
+              </svg>
+              <div class="card-note" id="sparkNote"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">
+                <strong>本轮新增与更新</strong>
+                <span class="mono" id="feedCount">—</span>
+              </div>
+              <div class="feed" id="feed"></div>
+            </div>
+          </div>
+
+        </div>
+      </details>
 
       <section id="all-news" aria-labelledby="all-news-title">
         <div class="section-heading">
