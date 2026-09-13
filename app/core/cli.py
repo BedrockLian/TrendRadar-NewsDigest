@@ -32,6 +32,8 @@ def main():
     admin = sub.add_parser("admin")
     admin.add_argument("--username", default="admin")
     admin.add_argument("--password-file", required=True)
+    # Renaming the administrator must retire the previous login in the same step.
+    admin.add_argument("--retire", action="append", default=[], metavar="USERNAME")
     sub.add_parser("maintain")
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--ai", action="store_true")
@@ -98,15 +100,28 @@ def main():
         from django.contrib.auth import get_user_model
         from django.contrib.auth.password_validation import validate_password
 
-        password = Path(args.password_file).read_text().strip()
-        if len(password) < 16:
-            raise ValueError("管理员密码至少16位")
-        user, _ = get_user_model().objects.get_or_create(username=args.username)
+        password = Path(args.password_file).read_text(encoding="utf-8").strip()
+        if len(password) < 12:
+            raise ValueError("管理员密码至少12位")
+        accounts = get_user_model().objects
+        user, created = accounts.get_or_create(username=args.username)
         validate_password(password, user)
         user.set_password(password)
-        user.is_staff = user.is_superuser = True
+        user.is_staff = user.is_superuser = user.is_active = True
         user.save()
-        print("管理员已设置")
+        retired = []
+        for name in args.retire:
+            if name == args.username:
+                continue
+            # A renamed administrator must not leave a working login behind.
+            for old in accounts.filter(username=name):
+                old.is_active = old.is_staff = old.is_superuser = False
+                old.set_unusable_password()
+                old.save()
+                retired.append(old.username)
+        print(f"管理员已{'创建' if created else '更新'}：{args.username}")
+        if retired:
+            print(f"已停用旧账号：{'、'.join(retired)}")
     elif args.command == "maintain":
         from .storage import maintain
 

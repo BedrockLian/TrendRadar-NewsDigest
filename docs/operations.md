@@ -27,7 +27,19 @@ bash /opt/trendradar-next/current/deploy/run.sh import-legacy /opt/trendradar
 bash /opt/trendradar-next/current/deploy/run.sh verify --ai
 ```
 
-`--ai`会产生一次真实模型请求。初始化密钥如存在则从旧环境迁移，模型按新系统设置使用Responses。管理员密码写入`/etc/trendradar-next/admin-password`，不打印；请通过SSH传到自己的受保护本地位置。
+`--ai`会产生一次真实模型请求。初始化密钥如存在则从旧环境迁移，模型按新系统设置使用Responses。管理员账号记录在`/etc/trendradar-next/admin-username`、口令记录在`/etc/trendradar-next/admin-password`（0640 root:radar，不打印）；请通过SSH传到自己的受保护本地位置。
+
+## 管理员账号
+
+全站只有一个管理员账号。口令经`validate_password`校验：至少12位、不得与用户名相似、不得是常见密码或纯数字。改用户名时必须同时停用旧账号，否则旧账号仍是有效登录：
+
+```sh
+bash /opt/trendradar-next/current/deploy/run.sh admin --username 新用户名 --retire 旧用户名 --password-file /root/.radar-new-password
+install -m 640 -o root -g radar /root/.radar-new-password /etc/trendradar-next/admin-password
+rm -f /root/.radar-new-password
+```
+
+口令文件必须由本地文件经`scp`上传（命令行参数会进入 shell 历史与进程列表）。2026-09-13 上线后账号从部署时生成的`admin`改为`BedrockLian`，`admin`已停用且密码不可用；该用户名曾因传入空值短暂建立一个空用户名账号，已删除，脚本现拒绝空用户名。
 
 ## 域名切换
 

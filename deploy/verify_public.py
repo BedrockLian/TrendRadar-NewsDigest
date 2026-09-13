@@ -20,11 +20,12 @@ PRIVATE_PATHS = ["/output/briefings/.state.json", "/.state.json", "/db.sqlite3",
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="https://news.blian117.dpdns.org")
+    parser.add_argument("--username", default="admin")
     parser.add_argument("--password-file", required=True)
     args = parser.parse_args()
     password = Path(args.password_file).read_text(encoding="utf-8").strip()
-    if len(password) < 16:
-        raise SystemExit("password file looks wrong")
+    if len(password) < 8:
+        raise SystemExit("password file looks empty or truncated")
     report = {"anonymous": {}, "assets": {}, "private": {}, "pages": {}, "errors": []}
     with httpx.Client(base_url=args.base_url, timeout=60, follow_redirects=False) as client:
         health = client.get("/health/")
@@ -55,7 +56,7 @@ def main():
             raise SystemExit("login form unavailable; cannot verify the private surfaces")
         signed_in = client.post(
             "/login/",
-            data={"username": "admin", "password": password, "csrfmiddlewaretoken": token.group(1)},
+            data={"username": args.username, "password": password, "csrfmiddlewaretoken": token.group(1)},
             headers={"Referer": args.base_url + "/login/"},
         )
         report["login"] = signed_in.status_code
