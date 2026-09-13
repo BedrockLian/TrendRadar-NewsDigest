@@ -1,0 +1,1 @@
+{% extends 'base.html' %}{% block content %}<div class="page-heading"><h1>{{ title }}</h1></div><form class="editor-form" method="post">{% csrf_token %}{{ form.as_p }}<button>保存</button></form>{% endblock %}
