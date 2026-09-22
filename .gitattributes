@@ -1,0 +1,11 @@
+# Deployed to Linux over tar/ssh, so shell entry points must keep LF endings.
+*.sh text eol=lf
+*.py text eol=lf
+*.ps1 text eol=crlf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+*.yml text eol=lf

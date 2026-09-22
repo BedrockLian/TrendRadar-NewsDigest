@@ -1,0 +1,38 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.local/
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Runtime data and generated output
+*.db
+*.sqlite3
+*.dump
+*.log
+*.pid
+*.partial
+backups/
+staticfiles/
+media/
+dist/
+build/
+
+# Browser and editor artifacts
+playwright-report/
+test-results/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
