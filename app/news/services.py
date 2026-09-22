@@ -11,8 +11,9 @@ from django.core import signing
 from django.db import connection, transaction
 from django.db.models import Q
 from django.utils import timezone
-from django.utils.html import strip_tags
 from django.utils.dateparse import parse_datetime
+from django.utils.html import strip_tags
+
 from .models import Article, ArticleVersion, FeedIdentity, Tombstone
 
 
@@ -87,6 +88,26 @@ def index_article(article):
         )
 
 
+def enqueue_enrichment(article_id, version_id):
+    from django.conf import settings
+
+    if not settings.AI_KEY:
+        return
+    from app.core.models import SiteSettings
+    from app.core.tasks import enqueue
+
+    article = Article.objects.get(pk=article_id)
+    config = SiteSettings.current()
+    enqueue(
+        "enrich",
+        f"enrich:{version_id}:{config.ai_model}",
+        {"version": version_id},
+        queue="ai",
+        priority=20 if article.breaking else 30,
+        articles=[article],
+    )
+
+
 @transaction.atomic
 def ingest(feed, item, *, imported=False):
     url = canonical_url(item["url"])
@@ -121,7 +142,7 @@ def ingest(feed, item, *, imported=False):
     title = plain(item.get("title"))[:4000] or url
     summary = plain(item.get("summary"))[:32000]
     content = plain(item.get("content"))[:256000]
-    fingerprint = digest("\n".join([title, summary, content]))
+    fingerprint = digest(f"{title}\n{summary}\n{content}")
     version, fresh = ArticleVersion.objects.get_or_create(
         article=article,
         fingerprint=fingerprint,
@@ -147,7 +168,9 @@ def ingest(feed, item, *, imported=False):
             article.updated_at = version.created_at
             article.breaking = not imported and bool(
                 re.search(
-                    r"突发|地震|海啸|政变|空袭|breaking news|breaking:|earthquake|missile attack", title, re.I
+                    r"突发|地震|海啸|政变|空袭|breaking news|breaking:|earthquake|missile attack",
+                    title,
+                    re.IGNORECASE,
                 )
             )
             article.save(update_fields=["current", "updated_at", "breaking"])
@@ -162,6 +185,10 @@ def ingest(feed, item, *, imported=False):
         if article.current_id == version.pk:
             article.updated_at = version.created_at
             article.save(update_fields=["updated_at"])
+    if fresh and not imported and article.current_id == version.pk and not version.title_zh:
+        transaction.on_commit(
+            lambda article_id=article.pk, version_id=version.pk: enqueue_enrichment(article_id, version_id)
+        )
     return article, "added" if created else "updated" if fresh else "duplicate"
 
 

@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from urllib.parse import urlparse, unquote
+from urllib.parse import unquote, urlparse
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEBUG = os.getenv("RADAR_DEBUG", "0") == "1"

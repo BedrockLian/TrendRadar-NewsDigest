@@ -1,14 +1,17 @@
 import json
 import sqlite3
-from pathlib import Path
 from datetime import timedelta
+from pathlib import Path
+
 import yaml
 from django.db import transaction
 from django.utils import timezone
-from app.core.models import ImportMap, ImportRun, SiteSettings
+
 from app.briefs.models import Briefing, BriefItem
-from .models import Feed, Category
-from .services import ingest, timestamp, digest, index_article
+from app.core.models import ImportMap, ImportRun, SiteSettings
+
+from .models import Category, Feed
+from .services import digest, index_article, ingest, timestamp
 
 
 def inspect_legacy(root):

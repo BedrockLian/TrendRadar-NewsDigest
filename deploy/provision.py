@@ -36,27 +36,23 @@ if not env.exists():
     subprocess.run(
         ["runuser", "-u", "postgres", "--", str(pg / "createdb"), "-O", "radar", "radar"], check=True
     )
-    old = Path("/opt/trendradar/config/news-digest.env")
-    old_values = {}
-    if old.exists():
-        for line in old.read_text().splitlines():
-            if "=" in line and not line.startswith("#"):
-                key, value = line.split("=", 1)
-                try:
-                    old_values[key] = shlex.split(value)[0] if value.strip() else ""
-                except ValueError:
-                    pass
+    public_host = os.environ["RADAR_PUBLIC_HOST"].strip()
+    public_origin = os.environ.get("RADAR_PUBLIC_ORIGIN", f"https://{public_host}").strip()
+    if not public_host or "://" in public_host or "/" in public_host:
+        raise RuntimeError("RADAR_PUBLIC_HOST must be a hostname without a scheme or path")
+    if not public_origin.startswith(("https://", "http://")):
+        raise RuntimeError("RADAR_PUBLIC_ORIGIN must be an HTTP(S) origin")
     values = {
         "DJANGO_SETTINGS_MODULE": "app.core.settings",
         "RADAR_DEBUG": "0",
         "RADAR_SECRET_KEY": secrets.token_urlsafe(48),
         "DATABASE_URL": f"postgresql://radar:{quote(password)}@127.0.0.1:5432/radar",
-        "RADAR_HOSTS": "news.blian117.dpdns.org,localhost,127.0.0.1",
-        "RADAR_ORIGINS": "https://news.blian117.dpdns.org",
+        "RADAR_HOSTS": f"{public_host},localhost,127.0.0.1",
+        "RADAR_ORIGINS": public_origin,
         "RADAR_DATA_PATH": "/var/lib/trendradar-next",
         "RADAR_DB_POOL": "3",
         "DEEPSEEK_BASE_URL": "https://api.deepseek.com",
-        "DEEPSEEK_API_KEY": old_values.get("AI_API_KEY", ""),
+        "DEEPSEEK_API_KEY": "",
         "PYTHONUNBUFFERED": "1",
         "PYTHONUTF8": "1",
     }

@@ -22,6 +22,8 @@ class BriefItem(models.Model):
     position = models.PositiveIntegerField()
     title = models.TextField()
     summary = models.TextField()
+    title_zh = models.TextField(blank=True)
+    summary_zh = models.TextField(blank=True)
     source = models.CharField(max_length=200)
     url = models.TextField()
     group_key = models.BigIntegerField(null=True)

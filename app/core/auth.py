@@ -1,9 +1,12 @@
 from datetime import timedelta
+
 from django.contrib.auth.views import LoginView
 from django.db import transaction
 from django.http import HttpResponse
 from django.utils import timezone
+
 from app.news.services import digest
+
 from .models import LoginAttempt
 
 

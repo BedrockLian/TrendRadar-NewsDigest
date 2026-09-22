@@ -9,10 +9,7 @@ def main():
     sub.add_parser("migrate")
     sub.add_parser("check")
     sub.add_parser("status")
-    backup = sub.add_parser("backup-complete")
-    # The marker gates deletion of the legacy repository, so it is only written
-    # when the caller has actually restored/listed the archive off the host.
-    backup.add_argument("--verified-legacy-backup", action="store_true")
+    sub.add_parser("backup-complete")
     serve = sub.add_parser("serve")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=18081)
@@ -37,6 +34,14 @@ def main():
     sub.add_parser("maintain")
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--ai", action="store_true")
+    ai_backfill = sub.add_parser("ai-backfill")
+    ai_backfill.add_argument("--scope", choices=["live", "imported", "all"], default="all")
+    ai_backfill.add_argument("--limit", type=int, default=1000)
+    event_auto = sub.add_parser("events-auto")
+    event_auto.add_argument("--limit", type=int, default=24)
+    event_auto.add_argument("--lookback-hours", type=int, default=24)
+    event_auto.add_argument("--batches", type=int, default=1)
+    event_auto.add_argument("--audit-now", action="store_true")
     bench = sub.add_parser("benchmark")
     bench.add_argument("--count", type=int, default=1000000)
     bench.add_argument("--confirm-test-database", action="store_true")
@@ -47,7 +52,8 @@ def main():
     django.setup()
     from django.core.management import call_command
     from django.utils import timezone
-    from .models import SiteSettings, Job
+
+    from .models import Job, SiteSettings
 
     if args.command == "serve":
         import uvicorn
@@ -74,7 +80,9 @@ def main():
         scheduler(args.once)
     elif args.command == "collect":
         import uuid
+
         from app.news.models import Feed
+
         from .tasks import enqueue
 
         rows = Feed.objects.filter(enabled=True)
@@ -97,6 +105,7 @@ def main():
         )
     elif args.command == "admin":
         from pathlib import Path
+
         from django.contrib.auth import get_user_model
         from django.contrib.auth.password_validation import validate_password
 
@@ -136,14 +145,8 @@ def main():
             )
         )
     elif args.command == "backup-complete":
-        from pathlib import Path
-
         SiteSettings.objects.filter(pk=1).update(last_backup=timezone.now())
-        if args.verified_legacy_backup:
-            marker = Path("/etc/trendradar-next/legacy-backed-up")
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(f"{timezone.now().isoformat()}\n", encoding="utf-8")
-            print("已记录离机备份标记")
+        print("已记录备份完成时间")
     elif args.command == "benchmark":
         from .benchmark import run
 
@@ -152,6 +155,27 @@ def main():
         from .verify import verify
 
         print(json.dumps(verify(args.ai), ensure_ascii=False, indent=2))
+    elif args.command == "ai-backfill":
+        from app.ai.services import queue_backfill
+
+        print(json.dumps(queue_backfill(args.scope, args.limit), ensure_ascii=False, indent=2))
+    elif args.command == "events-auto":
+        from .tasks import enqueue
+
+        job = enqueue(
+            "event_discovery",
+            f"manual-major-events:{timezone.now().timestamp()}",
+            {
+                "limit": args.limit,
+                "lookback_hours": args.lookback_hours,
+                "batches": args.batches,
+                "audit_only": args.audit_now,
+                "force": args.audit_now,
+            },
+            queue="ai",
+            priority=5,
+        )
+        print(json.dumps({"job": str(job.pk)}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

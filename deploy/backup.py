@@ -3,28 +3,26 @@
 import argparse
 import hashlib
 import json
+import os
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default="campus-server")
+    parser.add_argument("--host", default=os.environ.get("RADAR_BACKUP_HOST"))
     parser.add_argument("--directory", default=str(Path.home() / "Documents/Trendradar-backups"))
     parser.add_argument(
         "--pg-restore",
         default=str(Path(__file__).resolve().parents[1] / ".local/postgres/pgsql/bin/pg_restore.exe"),
     )
-    parser.add_argument(
-        "--mark-legacy-backed-up",
-        action="store_true",
-        help="同时记录离机备份标记，解锁旧仓库清理（仅在本次归档已验证后使用）",
-    )
     args = parser.parse_args()
+    if not args.host:
+        parser.error("provide --host or set RADAR_BACKUP_HOST")
     folder = Path(args.directory).resolve()
     folder.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     temporary = folder / f"{stamp}.partial"
     destination = folder / f"{stamp}.dump"
     try:
@@ -51,7 +49,7 @@ def main():
         keep = set(all_backups[:7])
         weeks = set()
         for path in all_backups:
-            week = datetime.strptime(path.stem, "%Y%m%d-%H%M%S").isocalendar()[:2]
+            week = datetime.strptime(path.stem, "%Y%m%d-%H%M%S").replace(tzinfo=UTC).isocalendar()[:2]
             if week not in weeks and len(weeks) < 4:
                 keep.add(path)
                 weeks.add(week)
@@ -61,10 +59,6 @@ def main():
                 path.unlink()
                 path.with_suffix(".sha256").unlink(missing_ok=True)
         command = "bash /opt/trendradar-next/current/deploy/run.sh backup-complete"
-        if args.mark_legacy_backed_up:
-            # Records that an off-host archive of the pre-cutover data exists;
-            # remove-legacy.sh refuses to delete anything without this marker.
-            command += " --verified-legacy-backup"
         subprocess.run(
             [
                 "ssh",

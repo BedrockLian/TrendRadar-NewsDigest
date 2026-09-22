@@ -1,10 +1,11 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 from django.db import connection, transaction
 from psycopg import sql
 
 
 def ensure_partitions():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     with transaction.atomic(), connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_xact_lock(7142302)")
@@ -39,7 +40,7 @@ def ensure_partitions():
             "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename ~ '^news_crawlrun_[0-9]{6}$'"
         )
         for (name,) in cursor.fetchall():
-            start = datetime.strptime(name[-6:], "%Y%m").replace(tzinfo=timezone.utc)
+            start = datetime.strptime(name[-6:], "%Y%m").replace(tzinfo=UTC)
             end = (start + timedelta(days=32)).replace(day=1)
             if end < now - timedelta(days=14):
                 cursor.execute(sql.SQL("DROP TABLE {}").format(sql.Identifier(name)))

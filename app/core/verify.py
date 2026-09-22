@@ -1,10 +1,12 @@
 import platform
 import time
+
+from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import Client
-from django.contrib.auth import get_user_model
-from app.news.models import Article, ArticleVersion
+
 from app.briefs.models import Briefing
+from app.news.models import Article, ArticleVersion
 
 
 def verify(ai=False):
@@ -35,7 +37,7 @@ def verify(ai=False):
             "ms": round((time.perf_counter() - start) * 1000, 1),
         }
     if ai:
-        from app.ai.services import response_call, Enrichment
+        from app.ai.services import Enrichment, response_call
 
         response = response_call(
             "将新闻改写为中文标题和简短简介。",

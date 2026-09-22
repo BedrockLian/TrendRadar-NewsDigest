@@ -1,7 +1,9 @@
 from unittest.mock import patch
+
 from django.utils import timezone
+
 from app.news.crawler import collect
-from app.news.models import HourStat, Article
+from app.news.models import Article, HourStat
 from app.news.services import ingest
 
 
@@ -48,9 +50,9 @@ def test_api_answers_anonymous_callers_with_json(client):
 
 
 def test_all_pages_render_real_data(reader, config, feed, item):
+    from app.briefs.services import generate
     from app.events.models import Event
     from app.events.services import create_node
-    from app.briefs.services import generate
 
     a, _ = ingest(feed, item)
     e = Event.objects.create(name="芯片追踪", keywords="芯片")

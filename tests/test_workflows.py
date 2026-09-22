@@ -1,15 +1,18 @@
 from datetime import timedelta
 from unittest.mock import patch
+
+from django.test import override_settings
 from django.utils import timezone
-from app.news.services import ingest
-from app.news.models import Article, ArticleVersion, Favourite, Tombstone
-from app.briefs.services import generate
+
 from app.briefs.models import Briefing, BriefItem
-from app.events.models import Event
-from app.events.services import create_node, merge_nodes, split_node
-from app.core.storage import maintain
-from app.core.tasks import enqueue, claim, execute, schedule_once
+from app.briefs.services import generate
 from app.core.models import Job
+from app.core.storage import maintain
+from app.core.tasks import claim, enqueue, execute, schedule_once
+from app.events.models import Candidate, Event
+from app.events.services import create_node, discover, merge_nodes, remove_node, split_node
+from app.news.models import Article, ArticleVersion, Favourite, Tombstone
+from app.news.services import ingest
 
 
 def test_brief_is_frozen_and_deduplicated(config, feed, item):
@@ -22,6 +25,19 @@ def test_brief_is_frozen_and_deduplicated(config, feed, item):
     assert b.items.get().title == item["title"]
     later = generate(end=end + timedelta(minutes=1))
     assert later.items.count() == 0
+
+
+def test_new_article_enqueues_enrichment_after_commit(config, feed, item, django_capture_on_commit_callbacks):
+    english = {**item, "title": "New foreign report", "summary": "News requiring translation."}
+    with patch("app.core.tasks.enqueue") as enqueue:
+        with django_capture_on_commit_callbacks(execute=True):
+            article, _ = ingest(feed, english)
+    enqueue.assert_called_once()
+    assert enqueue.call_args.args[:2] == (
+        "enrich",
+        f"enrich:{article.current_id}:{config.ai_model}",
+    )
+    assert enqueue.call_args.kwargs["priority"] == 30
 
 
 def test_cleanup_protects_citations_favourites_and_jobs(config, feed, item):
@@ -74,6 +90,31 @@ def test_event_merge_and_split_preserve_reports(feed, item):
     assert merged.reports.count() == 1 and split.reports.count() == 1 and split.confirmed
 
 
+def test_event_discovery_requeues_existing_pending_candidates(config, feed, item):
+    article, _ = ingest(feed, item)
+    event = Event.objects.create(name="芯片事件", keywords="x")
+    Candidate.objects.create(event=event, article=article)
+    with override_settings(AI_KEY="configured"):
+        discover(event.pk)
+    job = Job.objects.get(kind="event_ai", payload__event=event.pk, payload__article=article.pk)
+    assert job.key == f"event-auto:1:{event.pk}:{article.pk}"
+    assert job.priority == 20
+
+
+def test_removed_ai_node_is_rejected_and_leaves_timeline(feed, item):
+    article, _ = ingest(feed, item)
+    event = Event.objects.create(name="芯片事件", keywords="芯片")
+    candidate = Candidate.objects.create(event=event, article=article, status="accepted")
+    node = create_node(event, "自动收录进展", "", [article.current_id])
+    remove_node(node.pk)
+    candidate.refresh_from_db()
+    event.refresh_from_db()
+    assert candidate.status == "rejected"
+    assert not event.nodes.exists()
+    assert event.overview == ""
+    assert event.overview_at is None
+
+
 def test_expired_lease_recovers_and_completed_not_reclaimed(config):
     enqueue("test", "lease", queue="maintenance")
     first = claim("maintenance")
@@ -93,3 +134,7 @@ def test_schedule_catchup_single_brief(config):
     assert jobs.count() == 1 and jobs.get().payload["catchup"]
     schedule_once()
     assert jobs.count() == 1
+    discovery = Job.objects.get(kind="event_discovery")
+    assert discovery.queue == "ai" and discovery.priority == 5
+    schedule_once()
+    assert Job.objects.filter(kind="event_discovery").count() == 1

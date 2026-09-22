@@ -1,8 +1,11 @@
 import re
+
 from django import forms
+
+from app.events.models import Event
 from app.news.models import Feed
 from app.news.services import public_url
-from app.events.models import Event
+
 from .models import SiteSettings
 
 
@@ -81,7 +84,7 @@ class SettingsForm(forms.ModelForm):
         self.fields["times"].initial = ",".join(self.instance.briefing_times)
 
     def clean_times(self):
-        slots = sorted(set(s.strip() for s in self.cleaned_data["times"].split(",")))
+        slots = sorted({s.strip() for s in self.cleaned_data["times"].split(",")})
         if not 1 <= len(slots) <= 8 or any(not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", s) for s in slots):
             raise forms.ValidationError("请填写1至8个有效的24小时时间")
         return slots

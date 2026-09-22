@@ -1,4 +1,5 @@
 import uuid
+
 from django.db import models
 from django.utils import timezone
 
@@ -10,7 +11,7 @@ class SiteSettings(models.Model):
     source_limit = models.PositiveIntegerField(default=2)
     retention_days = models.PositiveIntegerField(default=180)
     ai_model = models.CharField(max_length=100, default="deepseek-flash")
-    ai_daily_tokens = models.PositiveIntegerField(default=200000)
+    ai_daily_tokens = models.PositiveIntegerField(default=1000000)
     ai_concurrency = models.PositiveIntegerField(default=1)
     db_budget_gb = models.FloatField(default=16)
     soft_free_gb = models.FloatField(default=8)

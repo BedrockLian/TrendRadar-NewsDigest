@@ -1,10 +1,13 @@
 from collections import Counter
 from datetime import timedelta
-from django.db import transaction, connection
+
+from django.db import connection, transaction
 from django.utils import timezone
+
 from app.core.models import SiteSettings
 from app.news.models import Article, Category
 from app.news.services import timestamp
+
 from .models import Briefing, BriefItem
 
 
@@ -74,6 +77,8 @@ def generate(end=None, catchup=False, revision=False):
                 position=i,
                 title=a.title,
                 summary=a.current.summary_zh or a.current.summary,
+                title_zh=a.current.title_zh,
+                summary_zh=a.current.summary_zh,
                 source=a.feed.name,
                 url=a.url,
                 group_key=a.group_id,
@@ -81,8 +86,9 @@ def generate(end=None, catchup=False, revision=False):
             for i, a in enumerate(selected, 1)
         ]
     )
-    from app.core.tasks import enqueue
     from django.conf import settings
+
+    from app.core.tasks import enqueue
 
     if settings.AI_KEY:
         for a in selected:

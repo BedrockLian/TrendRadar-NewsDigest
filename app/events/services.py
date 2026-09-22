@@ -1,12 +1,28 @@
 import re
 from datetime import timedelta
+
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
-from django.conf import settings
-from app.news.services import search_articles
-from app.news.models import ArticleVersion, Feed
+
 from app.core.tasks import enqueue
-from .models import Event, Candidate, Node, NodeReport
+from app.news.models import ArticleVersion, Feed
+from app.news.services import search_articles
+
+from .models import Candidate, Event, Node, NodeReport
+
+EVENT_AUTOMATION_VERSION = "1"
+
+
+def enqueue_candidate(candidate):
+    return enqueue(
+        "event_ai",
+        f"event-auto:{EVENT_AUTOMATION_VERSION}:{candidate.event_id}:{candidate.article_id}",
+        {"event": candidate.event_id, "article": candidate.article_id},
+        queue="ai",
+        priority=20,
+        articles=[candidate.article_id],
+    )
 
 
 def discover(event_id=None, full=False):
@@ -15,6 +31,11 @@ def discover(event_id=None, full=False):
     if event_id:
         events = events.filter(pk=event_id)
     for event in events:
+        if settings.AI_KEY:
+            for candidate in event.candidates.filter(status="pending").only("id", "event_id", "article_id")[
+                :2000
+            ]:
+                enqueue_candidate(candidate)
         ids = set()
         start = event.start
         if event.last_scan and not full:
@@ -36,14 +57,7 @@ def discover(event_id=None, full=False):
             if created:
                 found += 1
             if candidate.status == "pending" and settings.AI_KEY:
-                enqueue(
-                    "event_ai",
-                    f"event:{event.pk}:article:{article_id}",
-                    {"event": event.pk, "article": article_id},
-                    queue="ai",
-                    priority=20,
-                    articles=[article_id],
-                )
+                enqueue_candidate(candidate)
         event.last_scan = timezone.now()
         event.save(update_fields=["last_scan"])
     return {"candidates": found}
@@ -64,11 +78,11 @@ def confirm_node(node_id):
 
 def refresh_overview(event_id):
     event = Event.objects.get(pk=event_id)
+    nodes = list(event.nodes.filter(confirmed=True)[:5])
     event.overview = "\n".join(
-        f"{timezone.localtime(n.occurred_at):%m-%d %H:%M} {n.title}"
-        for n in event.nodes.filter(confirmed=True)[:5]
+        f"{timezone.localtime(node.occurred_at):%m-%d %H:%M} {node.title}" for node in nodes
     )
-    event.overview_at = timezone.now()
+    event.overview_at = timezone.now() if nodes else None
     event.save(update_fields=["overview", "overview_at"])
 
 
@@ -90,6 +104,26 @@ def create_node(event, title, summary, versions, occurred_at=None, time_basis="r
     if confirmed:
         node = confirm_node(node.pk)
     return node
+
+
+@transaction.atomic
+def remove_node(node_id):
+    node = Node.objects.select_for_update().get(pk=node_id)
+    event_id = node.event_id
+    article_ids = list(node.reports.values_list("version__article_id", flat=True))
+    node.delete()
+    still_linked = set(
+        NodeReport.objects.filter(
+            node__event_id=event_id,
+            node__confirmed=True,
+            version__article_id__in=article_ids,
+        ).values_list("version__article_id", flat=True)
+    )
+    Candidate.objects.filter(
+        event_id=event_id,
+        article_id__in=set(article_ids) - still_linked,
+    ).update(status="rejected")
+    refresh_overview(event_id)
 
 
 @transaction.atomic

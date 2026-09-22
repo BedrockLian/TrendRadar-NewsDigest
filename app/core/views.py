@@ -1,26 +1,38 @@
 import json
+import re
 import uuid
 from datetime import timedelta
+
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_not_required
+from django.core.signing import BadSignature
 from django.db import connection, transaction
-from django.db.models import Sum, Count, Q
+from django.db.models import Count, Q, Sum
 from django.db.models.functions import TruncDay
 from django.http import JsonResponse, StreamingHttpResponse
-from django.shortcuts import render, redirect, get_object_or_404
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
-from django.core.signing import BadSignature
-from .forms import FeedForm, EventForm, SettingsForm
-from .models import Job, SiteSettings, ImportRun
-from .tasks import enqueue
-from app.news.models import Article, ArticleVersion, Feed, Category, HourStat, Favourite, StoryGroup
-from app.news.services import search_articles, article_dict, timestamp
+
+from app.ai.models import Conversation, UsageDay
 from app.briefs.models import Briefing
-from app.events.models import Event, Node, Candidate
-from app.events.services import confirm_node, create_node, merge_nodes, split_node, boost, refresh_overview
-from app.ai.models import UsageDay, Conversation
+from app.events.models import Candidate, Event, Node
+from app.events.services import (
+    boost,
+    confirm_node,
+    create_node,
+    merge_nodes,
+    refresh_overview,
+    remove_node,
+    split_node,
+)
+from app.news.models import Article, ArticleVersion, Category, Favourite, Feed, HourStat, StoryGroup
+from app.news.services import article_dict, search_articles, timestamp
+
+from .forms import EventForm, FeedForm, SettingsForm
+from .models import ImportRun, Job, SiteSettings
+from .tasks import enqueue
 
 
 def context(**extra):
@@ -33,7 +45,13 @@ def context(**extra):
 
 
 def home(request):
-    brief = Briefing.objects.prefetch_related("items").first()
+    brief = Briefing.objects.prefetch_related("items__version__article__category").first()
+    groups = {}
+    if brief:
+        for item in brief.items.all():
+            category = item.version.article.category
+            name = category.name if category else "综合"
+            groups.setdefault(name, []).append(item)
     rows = Article.objects.select_related("current", "feed", "category").filter(current__isnull=False)
     if brief:
         rows = rows.filter(first_seen__gt=brief.end)
@@ -44,6 +62,8 @@ def home(request):
             title="今日工作台",
             active="home",
             brief=brief,
+            brief_groups=groups.items(),
+            brief_items=list(brief.items.all()) if brief else [],
             articles=rows.order_by("-first_seen")[:30],
             events=Event.objects.filter(status="tracking").order_by("-created_at")[:6],
             breaking=Article.objects.select_related("current", "feed")
@@ -95,6 +115,16 @@ def article(request, pk):
         if row.group_id
         else []
     )
+    summary = (version.summary_zh or version.summary or "").strip()
+    content = (version.content or "").strip()
+
+    def normalized(value):
+        return re.sub(r"[\W_]+", "", value, flags=re.UNICODE).casefold()
+
+    repeated_summary = bool(summary and content and normalized(content).startswith(normalized(summary)))
+    return_to = request.GET.get("return", "")
+    if not return_to.startswith("/news/") or return_to.startswith("//"):
+        return_to = request.get_full_path()
     return render(
         request,
         "article.html",
@@ -111,6 +141,8 @@ def article(request, pk):
             .exclude(pk=row.pk)
             .order_by("-first_seen")[:40],
             events=Event.objects.filter(status="tracking"),
+            repeated_summary=repeated_summary,
+            return_to=return_to,
         ),
     )
 
@@ -136,6 +168,12 @@ def briefs(request, pk=None):
 def events(request, pk=None):
     if pk:
         event = get_object_or_404(Event, pk=pk)
+        drafts = list(event.nodes.filter(confirmed=False).prefetch_related("reports__version__article__feed"))
+        candidates = list(
+            event.candidates.filter(status="pending").select_related("article__current", "article__feed")[
+                :100
+            ]
+        )
         return render(
             request,
             "event.html",
@@ -144,12 +182,10 @@ def events(request, pk=None):
                 active="events",
                 event=event,
                 nodes=event.nodes.filter(confirmed=True).prefetch_related("reports__version__article__feed"),
-                drafts=event.nodes.filter(confirmed=False).prefetch_related(
-                    "reports__version__article__feed"
-                ),
-                candidates=event.candidates.filter(status="pending").select_related(
-                    "article__current", "article__feed"
-                )[:100],
+                drafts=drafts,
+                candidates=candidates,
+                pending_count=len(candidates),
+                event_tab="pending" if request.GET.get("tab") == "pending" else "timeline",
                 oldest=Article.objects.order_by("first_seen").values_list("first_seen", flat=True).first(),
             ),
         )
@@ -172,7 +208,7 @@ def edit_event(request, pk=None):
     if request.method == "POST" and form.is_valid():
         event = form.save()
         enqueue("events", f"manual-events:{uuid.uuid4()}", {"event": event.pk})
-        messages.success(request, "事件已保存，系统将查找关联报道。")
+        messages.success(request, "事件已保存，AI 将自动筛选关联报道并更新时间线。")
         return redirect("event", pk=event.pk)
     return render(
         request, "form.html", context(title="编辑事件" if pk else "建立事件", active="events", form=form)
@@ -316,6 +352,16 @@ def action(request):
                     b = get_object_or_404(Briefing, pk=int(data["brief"]))
                     payload = {"end": b.end.isoformat(), "revision": True}
                 job = enqueue("brief", f"manual-brief:{uuid.uuid4()}", payload, priority=10)
+            elif name == "discover_events":
+                if not settings.AI_KEY:
+                    raise ValueError("请先在服务器配置AI密钥")
+                job = enqueue(
+                    "event_discovery",
+                    f"manual-major-events:{uuid.uuid4()}",
+                    {"limit": 24, "lookback_hours": 24, "batches": 3},
+                    queue="ai",
+                    priority=5,
+                )
             elif name == "seed":
                 e = get_object_or_404(Event, pk=int(data["event"]))
                 v = get_object_or_404(ArticleVersion, pk=int(data["version"]))
@@ -328,6 +374,8 @@ def action(request):
                 Candidate.objects.filter(pk=int(data["candidate"])).update(status="rejected")
             elif name == "reject_draft":
                 get_object_or_404(Node, pk=int(data["node"]), confirmed=False).delete()
+            elif name == "remove_node":
+                remove_node(int(data["node"]))
             elif name == "accept_candidate":
                 c = get_object_or_404(
                     Candidate.objects.select_related("article__current"), pk=int(data["candidate"])
@@ -408,7 +456,28 @@ def api_stats(request):
 
 def api_job(request, pk):
     job = get_object_or_404(Job, pk=pk)
-    return JsonResponse({"id": str(job.pk), "status": job.status, "result": job.result, "error": job.error})
+    return JsonResponse({"id": str(job.pk), **job_state(job.status, job.result, job.error)})
+
+
+def job_state(status, result, error):
+    result = dict(result or {})
+    evidence = result.get("evidence")
+    if evidence:
+        version_ids = [item.get("version_id") for item in evidence if item.get("version_id")]
+        article_ids = dict(ArticleVersion.objects.filter(pk__in=version_ids).values_list("pk", "article_id"))
+        result["evidence"] = [
+            {
+                **item,
+                "article_id": article_ids.get(item.get("version_id")),
+                "internal_url": (
+                    f"/news/{article_ids[item['version_id']]}/?version={item['version_id']}"
+                    if item.get("version_id") in article_ids
+                    else item.get("url", "")
+                ),
+            }
+            for item in evidence
+        ]
+    return {"status": status, "result": result, "error": error}
 
 
 @require_POST
@@ -448,11 +517,13 @@ def job_stream(request, pk):
 
     async def stream():
         import asyncio
+
         from asgiref.sync import sync_to_async
 
         last = None
         for _ in range(300):
-            state = await sync_to_async(lambda: Job.objects.values("status", "result", "error").get(pk=pk))()
+            raw = await sync_to_async(lambda: Job.objects.values("status", "result", "error").get(pk=pk))()
+            state = await sync_to_async(job_state)(raw["status"], raw["result"], raw["error"])
             if state != last:
                 yield "event: state\ndata: " + json.dumps(state, ensure_ascii=False) + "\n\n"
                 last = state
@@ -475,7 +546,9 @@ def api_briefs(request):
 
 
 def api_events(request):
-    return JsonResponse({"items": list(Event.objects.values("id", "name", "status", "overview")[:100])})
+    return JsonResponse(
+        {"items": list(Event.objects.values("id", "name", "status", "overview", "auto_managed")[:100])}
+    )
 
 
 @login_not_required

@@ -7,6 +7,7 @@ authenticated reading surfaces.
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -19,10 +20,12 @@ PRIVATE_PATHS = ["/output/briefings/.state.json", "/.state.json", "/db.sqlite3",
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default="https://news.blian117.dpdns.org")
+    parser.add_argument("--base-url", default=os.environ.get("RADAR_TEST_URL"))
     parser.add_argument("--username", default="admin")
     parser.add_argument("--password-file", required=True)
     args = parser.parse_args()
+    if not args.base_url:
+        parser.error("provide --base-url or set RADAR_TEST_URL")
     password = Path(args.password_file).read_text(encoding="utf-8").strip()
     if len(password) < 8:
         raise SystemExit("password file looks empty or truncated")
@@ -64,7 +67,7 @@ def main():
             report["errors"].append(f"login failed with {signed_in.status_code}")
         for route in PAGES:
             response = client.get(route)
-            title = re.search(r"<title>(.*?)</title>", response.text, re.S)
+            title = re.search(r"<title>(.*?)</title>", response.text, re.DOTALL)
             report["pages"][route] = {
                 "status": response.status_code,
                 "bytes": len(response.content),

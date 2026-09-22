@@ -1,14 +1,17 @@
 import shutil
 from datetime import timedelta
+
 from django.conf import settings
 from django.db import connection, transaction
 from django.db.models import Q
 from django.utils import timezone
-from app.news.models import Article, ArticleVersion, Tombstone, FeedIdentity, CrawlRun
+
+from app.ai.models import Conversation, Generation
+from app.events.models import Candidate, Node
+from app.news.models import Article, ArticleVersion, CrawlRun, FeedIdentity, Tombstone
 from app.news.services import digest
-from app.ai.models import Generation, Conversation
-from app.events.models import Node, Candidate
-from .models import SiteSettings, Job
+
+from .models import Job, SiteSettings
 
 GB = 1024**3
 
@@ -117,8 +120,9 @@ def maintain():
             "backup_stale": not config.last_backup or config.last_backup < now - timedelta(hours=48),
         }
     )
-    from app.news.models import HourStat
     from django.db.models import Sum
+
+    from app.news.models import HourStat
 
     daily = HourStat.objects.filter(hour__gte=now - timedelta(days=7)).aggregate(n=Sum("added"))["n"] or 0
     with connection.cursor() as cursor:

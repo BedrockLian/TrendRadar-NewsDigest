@@ -1,17 +1,18 @@
 import calendar
 import time
 import uuid
-from datetime import datetime, timedelta, timezone as tz
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
-from urllib.parse import urlsplit, urljoin
+from urllib.parse import urljoin, urlsplit
+
 import feedparser
 import httpx
 from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
-from .models import Feed, DomainLease, CrawlRun, HourStat
-from .services import ingest, public_url
 
+from .models import CrawlRun, DomainLease, Feed, HourStat
+from .services import ingest, public_url
 
 REDIRECT_CODES = {301, 302, 303, 307, 308}
 
@@ -54,7 +55,7 @@ def collect(feed_id, job_key):
         lease.owner = owner
         lease.save()
     started = time.monotonic()
-    counts = dict(parsed=0, added=0, updated=0, duplicate=0)
+    counts = {"parsed": 0, "added": 0, "updated": 0, "duplicate": 0}
     status, http_status, error = "failed", 0, ""
     try:
         headers = {
@@ -90,7 +91,7 @@ def collect(feed_id, job_key):
                     "summary": entry.get("summary", ""),
                     "content": " ".join(x.get("value", "") for x in entry.get("content", [])),
                     "author": entry.get("author", ""),
-                    "published_at": datetime.fromtimestamp(calendar.timegm(date), tz.utc) if date else None,
+                    "published_at": datetime.fromtimestamp(calendar.timegm(date), UTC) if date else None,
                 }
                 try:
                     _, outcome = ingest(feed, item)

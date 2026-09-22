@@ -1,6 +1,7 @@
 import pytest
-from app.news.models import Feed, Category
+
 from app.core.models import SiteSettings
+from app.news.models import Category, Feed
 
 
 @pytest.fixture

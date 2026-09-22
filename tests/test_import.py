@@ -1,4 +1,5 @@
 import sqlite3
+
 from app.news.importer import import_legacy
 from app.news.models import Article
 

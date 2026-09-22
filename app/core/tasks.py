@@ -3,8 +3,10 @@ import threading
 import time
 import uuid
 from datetime import timedelta
+
 from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
+
 from .models import Job, SiteSettings
 
 log = logging.getLogger(__name__)
@@ -41,10 +43,11 @@ def claim(queue):
             >= config.ai_concurrency
         ):
             return None
+    ordering = ("priority", "-created_at") if queue == "ai" else ("priority", "available_at")
     job = (
         Job.objects.select_for_update(skip_locked=True)
         .filter(queue=queue, status="pending", available_at__lte=now)
-        .order_by("priority", "available_at")
+        .order_by(*ordering)
         .first()
     )
     if job:
@@ -77,7 +80,7 @@ def dispatch(job):
         from app.ai.services import prepare_ai
 
         return prepare_ai()
-    if job.kind in ("enrich", "event_ai", "answer"):
+    if job.kind in ("enrich", "event_ai", "event_discovery", "answer"):
         from app.ai.services import run_job
 
         return run_job(job)
@@ -142,9 +145,10 @@ def worker(queue, once=False):
 
 @transaction.atomic
 def schedule_once():
+    from zoneinfo import ZoneInfo
+
     from app.news.models import Feed
     from app.news.services import timestamp
-    from zoneinfo import ZoneInfo
 
     now = timezone.now()
     config = SiteSettings.current()
@@ -176,6 +180,14 @@ def schedule_once():
             priority=10,
         )
     enqueue("capacity", f"capacity:{now:%Y%m%d%H}", priority=0)
+    if not Job.objects.filter(kind="event_discovery", status__in=["pending", "running"]).exists():
+        enqueue(
+            "event_discovery",
+            f"major-events:{int(now.timestamp() // 1800)}",
+            {"limit": 24, "lookback_hours": 24, "batches": 1},
+            queue="ai",
+            priority=5,
+        )
     enqueue("events", f"events:{int(now.timestamp() // 600)}", priority=50)
     enqueue("prepare_ai", f"prepare-ai:{int(now.timestamp() // 600)}", priority=60)
     config.last_schedule = now

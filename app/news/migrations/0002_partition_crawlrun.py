@@ -1,6 +1,5 @@
 from django.db import migrations
 
-
 SQL = """
 ALTER TABLE news_crawlrun RENAME TO news_crawlrun_old;
 CREATE TABLE news_crawlrun (LIKE news_crawlrun_old INCLUDING DEFAULTS INCLUDING GENERATED INCLUDING IDENTITY INCLUDING STORAGE) PARTITION BY RANGE (created_at);

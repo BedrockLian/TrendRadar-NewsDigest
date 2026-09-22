@@ -17,6 +17,9 @@ class Event(models.Model):
     overview_at = models.DateTimeField(null=True)
     created_at = models.DateTimeField(default=timezone.now)
     last_scan = models.DateTimeField(null=True)
+    auto_managed = models.BooleanField(default=False)
+    lifecycle_note = models.TextField(blank=True)
+    last_reviewed_at = models.DateTimeField(null=True)
 
 
 class Candidate(models.Model):
@@ -28,6 +31,16 @@ class Candidate(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["event", "article"], name="event_article_unique")]
+
+
+class EventReview(models.Model):
+    article = models.OneToOneField("news.Article", on_delete=models.CASCADE, related_name="event_review")
+    status = models.CharField(
+        max_length=20,
+        choices=[("selected", "已选入事件"), ("excluded", "不构成重大事件")],
+    )
+    reason = models.TextField(blank=True)
+    reviewed_at = models.DateTimeField(default=timezone.now, db_index=True)
 
 
 class Node(models.Model):

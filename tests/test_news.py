@@ -1,10 +1,12 @@
-from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+
 import pytest
 from django.db import close_old_connections, connection
 from django.utils import timezone
-from app.news.services import ingest, search_articles, canonical_url
+
 from app.news.models import ArticleVersion, Feed
+from app.news.services import canonical_url, ingest, search_articles
 
 
 def test_duplicate_identity_and_versions(feed, item):

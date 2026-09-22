@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import authenticate, get_user_model
+
 from app.core.cli import main
 
 PASSWORD = "harbor-thistle-quartz-reef-pepper-2417"

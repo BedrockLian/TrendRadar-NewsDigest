@@ -1,5 +1,8 @@
-param([string]$HostName = 'campus-server')
+param([string]$HostName = $env:RADAR_BACKUP_HOST)
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($HostName)) {
+    throw 'Pass -HostName or set RADAR_BACKUP_HOST to an SSH host alias.'
+}
 $Repo = Split-Path -Parent $PSScriptRoot
 $Python = Join-Path $Repo '.venv\Scripts\python.exe'
 $Script = Join-Path $PSScriptRoot 'backup.py'

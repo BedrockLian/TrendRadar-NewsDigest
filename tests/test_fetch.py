@@ -7,6 +7,7 @@ redirects may be followed.
 
 import httpx
 import pytest
+
 from app.news.crawler import fetch
 
 

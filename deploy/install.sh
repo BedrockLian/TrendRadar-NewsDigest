@@ -3,6 +3,7 @@
 set -euo pipefail
 SOURCE=$(realpath "${1:?Usage: install.sh SOURCE_DIRECTORY}")
 ROOT=/opt/trendradar-next
+: "${RADAR_PUBLIC_HOST:?Set RADAR_PUBLIC_HOST to the HTTPS hostname before installation}"
 test "$(id -u)" = 0 || { echo 'Run as root'; exit 1; }
 test -f "$SOURCE/uv.lock"
 . /etc/os-release
@@ -92,7 +93,9 @@ export UV_PYTHON_INSTALL_DIR="$ROOT/python" UV_CACHE_DIR=/var/cache/trendradar-n
 cd "$SOURCE"
 "$ROOT/bin/uv" sync --frozen --no-dev --python 3.14
 # Secrets are generated or reused on the server, never printed or committed.
-PG_BIN="$PG_BIN" "$SOURCE/.venv/bin/python" "$SOURCE/deploy/provision.py"
+PG_BIN="$PG_BIN" RADAR_PUBLIC_HOST="$RADAR_PUBLIC_HOST" \
+  RADAR_PUBLIC_ORIGIN="${RADAR_PUBLIC_ORIGIN:-https://$RADAR_PUBLIC_HOST}" \
+  "$SOURCE/.venv/bin/python" "$SOURCE/deploy/provision.py"
 systemctl restart "$PG_SERVICE"
 ENV=/etc/trendradar-next/app.env
 chmod 640 "$ENV"
