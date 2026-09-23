@@ -48,7 +48,7 @@ def main():
             report["private"][path] = response.status_code
             if response.status_code == 200:
                 report["errors"].append(f"private path {path} is publicly readable")
-        for asset in ["/static/workspace.css", "/static/htmx.min.js", "/static/workspace.js"]:
+        for asset in ["/static/workspace.css", "/static/htmx.min.js", "/static/workspace.js", "/static/icons/radar.svg", "/static/icons/favicon.svg"]:
             response = client.get(asset)
             report["assets"][asset] = {"status": response.status_code, "bytes": len(response.content)}
             if response.status_code != 200 or not response.content:

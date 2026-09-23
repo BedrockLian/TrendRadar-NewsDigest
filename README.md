@@ -1,7 +1,5 @@
 # Trendradar
 
-[![Quality](https://github.com/BedrockLian/TrendRadar-NewsDigest/actions/workflows/quality.yml/badge.svg)](https://github.com/BedrockLian/TrendRadar-NewsDigest/actions/workflows/quality.yml)
-
 面向个人使用的生产级新闻情报工作站。Trendradar 持续采集 RSS，将报道去重、版本化并归档，按固定时间生成可追溯简报，再通过 DeepSeek Responses API 自动生成中文标题与简介、发现重大事件并维护带引用的事件时间线。
 
 界面采用 Django 模板、HTMX 和原生 JavaScript，支持浅色、深色与跟随系统三种主题。系统以单管理员、私有部署为边界，不包含多租户和公开注册流程。
