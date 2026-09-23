@@ -76,8 +76,8 @@ class BudgetDeferred(BudgetExceeded):
 # Ordinary AI work receives quota gradually. Briefings and interactive requests
 # retain the final 10% of the daily limit even when a backlog is large.
 LANE_LIMITS = {
-    "event": (0.02, 0.20),
-    "fresh": (0.08, 0.60),
+    "event": (0.10, 0.40),
+    "fresh": (0.08, 0.40),
     "backfill": (0.01, 0.10),
 }
 

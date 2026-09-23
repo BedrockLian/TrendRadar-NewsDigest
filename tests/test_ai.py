@@ -61,6 +61,18 @@ def test_event_calls_cannot_spend_the_morning_news_budget(config):
     assert usage.lane_used["event"] == 80
 
 
+def test_event_lane_covers_measured_daily_tracking_demand(config):
+    config.ai_daily_tokens = 10000
+    config.save(update_fields=["ai_daily_tokens"])
+    late = timezone.localtime().replace(hour=23, minute=59, second=59, microsecond=0)
+    with patch("app.ai.services.timezone.localtime", return_value=late):
+        day = reserve(3900, lane="event")
+        with pytest.raises(BudgetExceeded):
+            reserve(200, lane="event")
+        settle(day, 3900, S(input_tokens=3000, output_tokens=800), lane="event")
+    assert UsageDay.objects.get().lane_used["event"] == 3800
+
+
 def test_routine_work_cannot_consume_the_brief_reserve(config):
     config.ai_daily_tokens = 10000
     config.save(update_fields=["ai_daily_tokens"])
