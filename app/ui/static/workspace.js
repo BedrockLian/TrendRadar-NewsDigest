@@ -8,6 +8,19 @@
     remove(key) { try { sessionStorage.removeItem(key); } catch (_) {} }
   };
 
+  const feedFilter = document.getElementById('feed-filter');
+  feedFilter?.addEventListener('input', () => {
+    const query = feedFilter.value.trim().toLocaleLowerCase();
+    const rows = document.querySelectorAll('.settings-sources [data-feed-name]');
+    let visible = 0;
+    rows.forEach(row => {
+      row.hidden = !row.dataset.feedName.toLocaleLowerCase().includes(query);
+      if (!row.hidden) visible += 1;
+    });
+    document.getElementById('feed-visible-count').textContent = query ? `${visible} / ${rows.length} 个来源` : `${rows.length} 个来源`;
+    document.getElementById('feed-filter-empty').hidden = visible !== 0;
+  });
+
   document.getElementById('ask-open')?.addEventListener('click', () => {
     dialog.showModal();
     setTimeout(() => document.getElementById('question')?.focus(), 0);

@@ -1,1 +1,23 @@
-{% extends 'base.html' %}{% block content %}<div class="page-heading"><div><h1>重大事件</h1><p class="muted">AI 自动发现、更新并结束重大事件，保留完整时间线。</p></div><div class="page-actions"><form method="post" action="/action/">{% csrf_token %}<input type="hidden" name="action" value="discover_events"><input type="hidden" name="return" value="/events/"><button>立即扫描</button></form><a class="button quiet" href="/events/new/">手动建立</a></div></div><div class="event-grid">{% for event in events %}<a class="event-card" href="{% url 'event' event.pk %}"><div class="eyebrow">{{ event.get_status_display }}{% if event.auto_managed %} · AI 管理{% else %} · 人工建立{% endif %}{% if event.pending %}<span class="badge">{{ event.pending }} 篇 AI 筛选中</span>{% endif %}</div><h2>{{ event.name }}</h2><p>{{ event.overview|default:event.description|truncatechars:220 }}</p><span>展开时间线 →</span></a>{% empty %}<div class="empty"><h2>AI 正在观察新闻流</h2><p>系统会自动建立值得持续追踪的事件；也可以手动建立关注项。</p><a href="/events/new/">建立事件 →</a></div>{% endfor %}</div>{% endblock %}
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-heading">
+  <div><h1>重大事件</h1><p class="muted">按最近进展排序；进入事件查看时间线和报道依据。</p></div>
+  <div class="page-actions"><form method="post" action="/action/">{% csrf_token %}<input type="hidden" name="action" value="discover_events"><input type="hidden" name="return" value="/events/"><button>立即扫描</button></form><a class="button quiet" href="/events/new/">手动建立</a></div>
+</div>
+<nav class="event-filter" aria-label="事件状态">
+  <a href="/events/?status=tracking" {% if event_status == 'tracking' %}aria-current="page"{% endif %}>追踪中 <span>{{ event_counts.tracking }}</span></a>
+  <a href="/events/?status=paused" {% if event_status == 'paused' %}aria-current="page"{% endif %}>已暂停 <span>{{ event_counts.paused }}</span></a>
+  <a href="/events/?status=ended" {% if event_status == 'ended' %}aria-current="page"{% endif %}>已结束 <span>{{ event_counts.ended }}</span></a>
+</nav>
+<div class="event-list">
+{% for event in events %}
+  <a class="event-row" href="{% url 'event' event.pk %}?return={{ request.get_full_path|urlencode }}">
+    <span class="event-row-main"><span class="eyebrow">{{ event.get_status_display }} · {% if event.auto_managed %}AI 管理{% else %}人工建立{% endif %}{% if event.pending %} <b class="badge">{{ event.pending }} 篇待筛选</b>{% endif %}</span><strong>{{ event.name }}</strong><span class="event-row-summary">{{ event.overview|default:event.description|truncatechars:135 }}</span></span>
+    <span class="event-row-time">{% if event.overview_at %}{{ event.overview_at|date:'m/d H:i' }}{% else %}暂无进展{% endif %}<span aria-hidden="true"> →</span></span>
+  </a>
+{% empty %}
+  <div class="empty"><h2>此状态下暂无事件</h2><p>可以切换状态，或手动建立关注项。</p><a href="/events/new/">建立事件 →</a></div>
+{% endfor %}
+</div>
+{% if events.paginator.num_pages > 1 %}<nav class="event-pages" aria-label="事件分页">{% if events.has_previous %}<a href="?status={{ event_status }}&amp;page={{ events.previous_page_number }}">← 上一页</a>{% endif %}<span>第 {{ events.number }} / {{ events.paginator.num_pages }} 页</span>{% if events.has_next %}<a href="?status={{ event_status }}&amp;page={{ events.next_page_number }}">下一页 →</a>{% endif %}</nav>{% endif %}
+{% endblock %}

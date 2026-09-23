@@ -1,1 +1,16 @@
-<div class="news-list">{% for article in articles %}<article class="news-row" data-article-id="{{ article.pk }}"><div class="row-time"><time>{{ article.first_seen|date:'H:i' }}</time><small>{{ article.first_seen|date:'m/d' }}</small></div><div class="row-main"><div class="eyebrow">{{ article.feed.name }}{% if article.category %}<span> · {{ article.category.name }}</span>{% endif %}{% if article.breaking %}<b class="breaking">突发候选</b>{% endif %}</div><h3><a href="{% url 'article' article.pk %}">{{ article.title }}</a></h3><p>{{ article.current.summary_zh|default:article.current.summary|truncatechars:180 }}</p>{% if article.group_id %}<div class="row-meta">多来源报道</div>{% endif %}</div><a class="row-arrow" href="{% url 'article' article.pk %}" aria-label="阅读 {{ article.title }}">→</a></article>{% empty %}<div class="empty"><h3>这里还没有新闻</h3><p>调整筛选条件，或前往设置添加订阅源。</p><a href="/settings/">管理订阅源 →</a></div>{% endfor %}</div>
+<div class="news-list">
+  {% for article in articles %}
+    <a class="news-row" data-article-id="{{ article.pk }}" href="{% url 'article' article.pk %}?return={{ return_path|default:'/news/'|urlencode }}">
+      <span class="row-time"><time>{{ article.first_seen|date:'H:i' }}</time><small>{{ article.first_seen|date:'m/d' }}</small></span>
+      <span class="row-main">
+        <span class="eyebrow">{{ article.feed.name }}{% if article.category %}<span> · {{ article.category.name }}</span>{% endif %}{% if article.breaking %}<b class="breaking">突发候选</b>{% endif %}</span>
+        <strong class="row-title">{{ article.title }}</strong>
+        <span class="row-summary">{{ article.current.summary_zh|default:article.current.summary|truncatechars:180 }}</span>
+        {% if article.group_id %}<span class="row-meta">多来源报道</span>{% endif %}
+      </span>
+      <span class="row-arrow" aria-hidden="true">→</span>
+    </a>
+  {% empty %}
+    <div class="empty"><h3>这里还没有新闻</h3><p>调整筛选条件，或前往设置添加订阅源。</p><a href="/settings/">管理订阅源 →</a></div>
+  {% endfor %}
+</div>

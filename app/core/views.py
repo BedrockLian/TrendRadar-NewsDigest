@@ -2,13 +2,15 @@ import json
 import re
 import uuid
 from datetime import timedelta
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_not_required
+from django.core.paginator import Paginator
 from django.core.signing import BadSignature
 from django.db import connection, transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, F, Q, Sum
 from django.db.models.functions import TruncDay
 from django.http import JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -65,7 +67,10 @@ def home(request):
             brief_groups=groups.items(),
             brief_items=list(brief.items.all()) if brief else [],
             articles=rows.order_by("-first_seen")[:30],
-            events=Event.objects.filter(status="tracking").order_by("-created_at")[:6],
+            events=Event.objects.filter(status="tracking").order_by(
+                F("overview_at").desc(nulls_last=True), "-created_at"
+            )[:3],
+            return_path="/",
             breaking=Article.objects.select_related("current", "feed")
             .filter(breaking=True, first_seen__gte=timezone.now() - timedelta(hours=12))
             .order_by("-first_seen")[:3],
@@ -87,6 +92,8 @@ def news(request):
     except ValueError, BadSignature:
         error = "筛选条件无效，请使用至少两个字符并检查日期。"
     query = request.GET.copy()
+    query.pop("article", None)
+    return_path = request.path + ("?" + query.urlencode() if query else "")
     query["cursor"] = next_cursor or ""
     return render(
         request,
@@ -99,6 +106,7 @@ def news(request):
             categories=Category.objects.all(),
             error=error,
             next_url="?" + query.urlencode() if next_cursor else None,
+            return_path=return_path,
         ),
     )
 
@@ -123,8 +131,30 @@ def article(request, pk):
 
     repeated_summary = bool(summary and content and normalized(content).startswith(normalized(summary)))
     return_to = request.GET.get("return", "")
-    if not return_to.startswith("/news/") or return_to.startswith("//"):
-        return_to = request.get_full_path()
+    try:
+        destination = urlsplit(return_to)
+    except ValueError:
+        destination = urlsplit("")
+    if (
+        destination.scheme
+        or destination.netloc
+        or destination.fragment
+        or "\\" in return_to
+        or not (
+            destination.path in {"/", "/news/", "/briefs/", "/events/"}
+            or re.fullmatch(r"/(?:briefs|events)/\d+/", destination.path)
+        )
+    ):
+        return_to = "/news/"
+    return_label = (
+        "返回今日工作台"
+        if return_to == "/"
+        else "返回简报"
+        if return_to.startswith("/briefs/")
+        else "返回事件"
+        if return_to.startswith("/events/")
+        else "返回归档"
+    )
     return render(
         request,
         "article.html",
@@ -143,6 +173,7 @@ def article(request, pk):
             events=Event.objects.filter(status="tracking"),
             repeated_summary=repeated_summary,
             return_to=return_to,
+            return_label=return_label,
         ),
     )
 
@@ -168,6 +199,13 @@ def briefs(request, pk=None):
 def events(request, pk=None):
     if pk:
         event = get_object_or_404(Event, pk=pk)
+        return_to = request.GET.get("return", "/events/")
+        try:
+            destination = urlsplit(return_to)
+        except ValueError:
+            destination = urlsplit("")
+        if destination.path != "/events/" or destination.netloc or destination.scheme or destination.fragment:
+            return_to = "/events/"
         drafts = list(event.nodes.filter(confirmed=False).prefetch_related("reports__version__article__feed"))
         candidates = list(
             event.candidates.filter(status="pending").select_related("article__current", "article__feed")[
@@ -181,6 +219,7 @@ def events(request, pk=None):
                 title=event.name,
                 active="events",
                 event=event,
+                return_to=return_to,
                 nodes=event.nodes.filter(confirmed=True).prefetch_related("reports__version__article__feed"),
                 drafts=drafts,
                 candidates=candidates,
@@ -189,15 +228,27 @@ def events(request, pk=None):
                 oldest=Article.objects.order_by("first_seen").values_list("first_seen", flat=True).first(),
             ),
         )
+    status = request.GET.get("status", "tracking")
+    if status not in {"tracking", "paused", "ended"}:
+        status = "tracking"
+    counts = {"tracking": 0, "paused": 0, "ended": 0} | {
+        row["status"]: row["total"] for row in Event.objects.values("status").annotate(total=Count("id"))
+    }
+    rows = (
+        Event.objects.filter(status=status)
+        .annotate(pending=Count("candidates", filter=Q(candidates__status="pending")))
+        .order_by(F("overview_at").desc(nulls_last=True), "-created_at")
+    )
+    page = Paginator(rows, 20).get_page(request.GET.get("page"))
     return render(
         request,
         "events.html",
         context(
             title="重大事件",
             active="events",
-            events=Event.objects.annotate(
-                pending=Count("candidates", filter=Q(candidates__status="pending"))
-            ).order_by("-created_at"),
+            events=page,
+            event_status=status,
+            event_counts=counts,
         ),
     )
 
