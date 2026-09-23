@@ -18,6 +18,28 @@ def enqueue(kind, key, payload=None, *, queue="maintenance", priority=100, artic
     )
     if created and articles:
         job.articles.add(*articles)
+    if not created and kind == "enrich" and job.status == "completed":
+        from django.db.models import Q
+
+        from app.news.models import ArticleVersion
+
+        version_id = (payload or {}).get("version")
+        missing = ArticleVersion.objects.filter(pk=version_id).filter(
+            Q(title_zh="") | Q(summary_zh="", summary__gt="") | Q(summary_zh="", content__gt="")
+        )
+        if missing.exists():
+            Job.objects.filter(pk=job.pk, status="completed").update(
+                status="pending", priority=min(job.priority, priority), attempts=0,
+                available_at=timezone.now(), finished_at=None, error="",
+            )
+            job.refresh_from_db()
+    elif not created and job.status == "pending":
+        now = timezone.now()
+        if priority < job.priority or (priority <= 10 and job.available_at > now):
+            Job.objects.filter(pk=job.pk, status="pending").update(
+                priority=min(priority, job.priority), available_at=now, error=""
+            )
+            job.refresh_from_db()
     return job
 
 
@@ -106,16 +128,19 @@ def execute(job):
             status="completed", result=result, finished_at=timezone.now(), lease_until=None, error=""
         )
     except Exception as exc:
-        if type(exc).__name__ == "BudgetExceeded":
+        from app.ai.services import BudgetExceeded
+
+        if isinstance(exc, BudgetExceeded):
             tomorrow = (timezone.localtime() + timedelta(days=1)).replace(
                 hour=0, minute=5, second=0, microsecond=0
             )
+            retry_at = getattr(exc, "retry_at", tomorrow)
             Job.objects.filter(pk=job.pk, owner=job.owner).update(
                 status="pending",
                 attempts=0,
-                available_at=tomorrow,
+                available_at=retry_at,
                 lease_until=None,
-                error="今日AI额度已用完，次日继续",
+                error=str(exc),
             )
             return
         # Never include provider payloads, feed content or secrets in task errors.

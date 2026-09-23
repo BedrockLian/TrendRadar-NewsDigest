@@ -7,6 +7,8 @@ class UsageDay(models.Model):
     used = models.PositiveIntegerField(default=0)
     reserved = models.PositiveIntegerField(default=0)
     estimated = models.PositiveIntegerField(default=0)
+    lane_used = models.JSONField(default=dict)
+    lane_reserved = models.JSONField(default=dict)
 
 
 class Generation(models.Model):

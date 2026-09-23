@@ -130,4 +130,5 @@ curl --fail http://127.0.0.1:18081/health/
 - **AI 无输出**：同时检查 Responses API 的 HTTP 状态、`response.incomplete`、结构化 JSON、每日额度和任务租约。
 - **任务卡住**：过期租约会自动回收；确认 Worker 在运行后再人工重排。
 - **翻译积压**：保留简报、突发和事件任务优先级，用 `radar ai-backfill` 分批处理历史数据。
+- **额度耗尽后简报未翻译**：检查当日 `ai_usageday.used`、`lane_used` 和待执行 `enrich` 任务。常规任务按时段释放额度，近期新闻与事件、历史回填分别受限；简报和交互请求保留全天额度。提高每日上限前先核对实际用量与翻译覆盖率，设置变更不会自动清除已用 token。
 - **事件过多**：新事件需要至少两个独立来源或明确突发标记；使用 `radar events-auto --audit-now` 复核自动管理事件。

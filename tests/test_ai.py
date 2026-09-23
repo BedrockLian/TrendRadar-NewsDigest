@@ -48,6 +48,30 @@ def test_budget_reservation_is_conservative(config):
     assert UsageDay.objects.get().estimated == 200
 
 
+def test_event_calls_cannot_spend_the_morning_news_budget(config):
+    config.ai_daily_tokens = 10000
+    config.save(update_fields=["ai_daily_tokens"])
+    midnight = timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
+    with patch("app.ai.services.timezone.localtime", return_value=midnight):
+        with pytest.raises(BudgetExceeded):
+            reserve(1500, lane="event")
+        day = reserve(100, lane="event")
+        settle(day, 100, S(input_tokens=70, output_tokens=10), lane="event")
+    usage = UsageDay.objects.get()
+    assert usage.lane_used["event"] == 80
+
+
+def test_routine_work_cannot_consume_the_brief_reserve(config):
+    config.ai_daily_tokens = 10000
+    config.save(update_fields=["ai_daily_tokens"])
+    UsageDay.objects.create(day=timezone.localdate(), used=9000)
+    with pytest.raises(BudgetExceeded):
+        reserve(100, lane="fresh")
+    day = reserve(100, lane="urgent")
+    settle(day, 100, S(input_tokens=60, output_tokens=20), lane="urgent")
+    assert UsageDay.objects.get().lane_used["urgent"] == 80
+
+
 def test_structured_enrichment_uses_responses_and_cache(config, feed, item):
     english = {
         **item,
@@ -110,6 +134,27 @@ def test_chinese_article_does_not_spend_ai_tokens(config, feed, item):
     assert article.current.summary_zh == item["summary"]
     factory.assert_not_called()
     assert not UsageDay.objects.exists()
+
+
+def test_japanese_article_gets_chinese_enrichment(config, feed, item):
+    japanese = {
+        **item,
+        "title": "トランプ大統領が協定に署名",
+        "summary": "トランプ大統領は新しい協定に署名しました。",
+    }
+    article, _ = ingest(feed, japanese)
+    response = S(
+        status="completed",
+        output_text='{"title":"特朗普总统签署协议","summary":"特朗普总统签署了一项新协议。"}',
+        usage=S(input_tokens=40, output_tokens=20),
+    )
+    with patch("app.ai.services.client") as factory:
+        factory.return_value.responses.create.return_value = response
+        enrich_article(article.current_id)
+    article.current.refresh_from_db()
+    assert article.current.title_zh == "特朗普总统签署协议"
+    assert article.current.summary_zh == "特朗普总统签署了一项新协议。"
+    factory.return_value.responses.create.assert_called_once()
 
 
 def test_chinese_article_with_only_content_still_gets_ai_summary(config, feed, item):

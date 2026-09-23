@@ -40,6 +40,44 @@ def test_new_article_enqueues_enrichment_after_commit(config, feed, item, django
     assert enqueue.call_args.kwargs["priority"] == 30
 
 
+def test_brief_promotes_an_existing_delayed_translation(config, feed, item):
+    english = {**item, "title": "Untranslated report", "summary": "A report awaiting translation."}
+    article, _ = ingest(feed, english)
+    key = f"enrich:{article.current_id}:{config.ai_model}"
+    job = enqueue("enrich", key, {"version": article.current_id}, queue="ai", priority=30)
+    Job.objects.filter(pk=job.pk).update(
+        available_at=timezone.now() + timedelta(days=1), error="今日AI额度已用完，次日继续"
+    )
+    with override_settings(AI_KEY="configured"):
+        generate(end=timezone.now() + timedelta(minutes=1))
+    job.refresh_from_db()
+    assert job.priority == 10
+    assert job.available_at <= timezone.now()
+
+
+def test_brief_retries_a_delayed_top_priority_translation(config, feed, item):
+    article, _ = ingest(feed, {**item, "title": "Still untranslated", "summary": "An untranslated report."})
+    key = f"enrich:{article.current_id}:{config.ai_model}"
+    job = enqueue("enrich", key, {"version": article.current_id}, queue="ai", priority=10)
+    Job.objects.filter(pk=job.pk).update(available_at=timezone.now() + timedelta(days=1))
+    enqueue("enrich", key, {"version": article.current_id}, queue="ai", priority=10)
+    job.refresh_from_db()
+    assert job.available_at <= timezone.now()
+
+
+def test_missing_localization_reopens_a_completed_enrichment(config, feed, item):
+    english = {**item, "title": "Japanese report", "summary": "A report requiring translation."}
+    article, _ = ingest(feed, english)
+    key = f"enrich:{article.current_id}:{config.ai_model}"
+    job = enqueue("enrich", key, {"version": article.current_id}, queue="ai", priority=30)
+    Job.objects.filter(pk=job.pk).update(status="completed", finished_at=timezone.now())
+    enqueue("enrich", key, {"version": article.current_id}, queue="ai", priority=10)
+    job.refresh_from_db()
+    assert job.status == "pending"
+    assert job.priority == 10
+    assert job.finished_at is None
+
+
 def test_cleanup_protects_citations_favourites_and_jobs(config, feed, item):
     articles = []
     for i in range(5):

@@ -66,6 +66,22 @@ class BudgetExceeded(Exception):
     pass
 
 
+class BudgetDeferred(BudgetExceeded):
+    def __init__(self):
+        now = timezone.localtime()
+        self.retry_at = (now + timedelta(hours=1)).replace(minute=1, second=0, microsecond=0)
+        super().__init__("AI额度按时段释放，稍后继续")
+
+
+# Ordinary AI work receives quota gradually. Briefings and interactive requests
+# retain the final 10% of the daily limit even when a backlog is large.
+LANE_LIMITS = {
+    "event": (0.02, 0.20),
+    "fresh": (0.08, 0.60),
+    "backfill": (0.01, 0.10),
+}
+
+
 def client():
     if not settings.AI_KEY:
         raise RuntimeError("AI未配置")
@@ -73,26 +89,46 @@ def client():
 
 
 @transaction.atomic
-def reserve(amount):
+def reserve(amount, lane="urgent"):
     config = SiteSettings.current()
     day, _ = UsageDay.objects.get_or_create(day=timezone.localdate())
     day = UsageDay.objects.select_for_update().get(pk=day.pk)
     if day.used + day.reserved + amount > config.ai_daily_tokens:
         raise BudgetExceeded("达到每日AI用量上限")
+    if lane in LANE_LIMITS:
+        urgent_spent = day.lane_used.get("urgent", 0) + day.lane_reserved.get("urgent", 0)
+        urgent_reserve = max(0, config.ai_daily_tokens // 10 - urgent_spent)
+        if day.used + day.reserved + amount > config.ai_daily_tokens - urgent_reserve:
+            raise BudgetExceeded("保留简报与交互AI额度")
+        start, maximum = LANE_LIMITS[lane]
+        lane_total = day.lane_used.get(lane, 0) + day.lane_reserved.get(lane, 0) + amount
+        if lane_total > int(config.ai_daily_tokens * maximum):
+            raise BudgetExceeded("本类AI任务今日额度已用完")
+        local = timezone.localtime()
+        elapsed = (local.hour * 3600 + local.minute * 60 + local.second) / 86400
+        paced_limit = int(config.ai_daily_tokens * (start + (maximum - start) * elapsed))
+        if lane_total > paced_limit:
+            raise BudgetDeferred()
     day.reserved += amount
-    day.save()
+    day.lane_reserved = {**day.lane_reserved, lane: day.lane_reserved.get(lane, 0) + amount}
+    day.save(update_fields=["reserved", "lane_reserved"])
     return day.pk
 
 
 @transaction.atomic
-def settle(day_id, reserved, usage=None):
+def settle(day_id, reserved, usage=None, lane="urgent"):
     day = UsageDay.objects.select_for_update().get(pk=day_id)
     used = (usage.input_tokens + usage.output_tokens) if usage else reserved
     day.reserved = max(0, day.reserved - reserved)
     day.used += used
+    day.lane_reserved = {
+        **day.lane_reserved,
+        lane: max(0, day.lane_reserved.get(lane, 0) - reserved),
+    }
+    day.lane_used = {**day.lane_used, lane: day.lane_used.get(lane, 0) + used}
     if usage is None:
         day.estimated += used
-    day.save()
+    day.save(update_fields=["reserved", "used", "estimated", "lane_reserved", "lane_used"])
 
 
 def response_call(
@@ -105,6 +141,7 @@ def response_call(
     tool_choice=None,
     max_output_tokens=3000,
     reasoning_effort=None,
+    lane="urgent",
 ):
     config = SiteSettings.current()
     encoded = json.dumps(inputs, ensure_ascii=False)
@@ -114,7 +151,7 @@ def response_call(
     # reserving 3-4x the provider's actual usage for ordinary English RSS text.
     encoded_bytes = len((instructions + encoded + json.dumps(tools or [])).encode())
     reserved = max(256, (encoded_bytes + 1) // 2) + max_output_tokens + 512
-    day = reserve(reserved)
+    day = reserve(reserved, lane=lane)
     response = None
     try:
         kwargs = {
@@ -156,7 +193,7 @@ def response_call(
             raise RuntimeError(f"response_{response.status}{suffix}")
         return response
     finally:
-        settle(day, reserved, getattr(response, "usage", None))
+        settle(day, reserved, getattr(response, "usage", None), lane=lane)
 
 
 def structured(
@@ -167,6 +204,7 @@ def structured(
     *,
     max_output_tokens=1200,
     reasoning_effort=None,
+    lane="urgent",
 ):
     model = SiteSettings.current().ai_model
     key = digest(json.dumps([capability, payload, model, PROMPT_VERSION], ensure_ascii=False, sort_keys=True))
@@ -188,6 +226,7 @@ def structured(
             schema=schema,
             max_output_tokens=max_output_tokens,
             reasoning_effort=reasoning_effort,
+            lane=lane,
         )
         result = schema.model_validate_json(response.output_text)
         generation.output = result.model_dump()
@@ -205,6 +244,8 @@ def structured(
 
 
 def is_chinese_text(value):
+    if re.search(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]", value or ""):
+        return False
     cjk = len(re.findall(r"[\u3400-\u9fff]", value or ""))
     latin = len(re.findall(r"[A-Za-z]", value or ""))
     return cjk >= 4 and cjk / max(1, cjk + latin) >= 0.45
@@ -242,6 +283,17 @@ def enrich_article(version_id):
     if keep_existing_chinese(version):
         return {"title": version.title_zh, "summary": version.summary_zh, "local": True}
     source = version.summary or version.content
+    article = version.article
+    recent_brief = version.brief_items.filter(
+        briefing__imported=False, briefing__end__gte=timezone.now() - timedelta(days=1)
+    ).exists()
+    lane = (
+        "urgent"
+        if recent_brief or (article.breaking and article.first_seen >= timezone.now() - timedelta(hours=12))
+        else "fresh"
+        if not article.imported and article.first_seen >= timezone.now() - timedelta(days=1)
+        else "backfill"
+    )
     result = structured(
         "生成忠实原文的中文标题和80至120字简介；保留专有名词，不添加原文没有的信息",
         {"title": version.title[:1000], "source": source[:2400]},
@@ -249,6 +301,7 @@ def enrich_article(version_id):
         version,
         max_output_tokens=ENRICH_MAX_OUTPUT_TOKENS,
         reasoning_effort="none",
+        lane=lane,
     )
     version.title_zh, version.summary_zh = result.title, result.summary
     version.save(update_fields=["title_zh", "summary_zh"])
@@ -273,6 +326,7 @@ def suggest_event_links(event, version):
         version,
         max_output_tokens=4000,
         reasoning_effort="high",
+        lane="event",
     )
 
 
@@ -288,6 +342,7 @@ def draft_event_update(event, versions):
         EventDraft,
         max_output_tokens=6000,
         reasoning_effort="high",
+        lane="event",
     )
     allowed = {v.pk for v in versions}
     if not result.citations or not set(result.citations) <= allowed:
@@ -365,6 +420,7 @@ def identify_major_events(articles, active_events, retirement_candidates):
         MajorEventScan,
         max_output_tokens=12000,
         reasoning_effort="high",
+        lane="event",
     )
 
 
