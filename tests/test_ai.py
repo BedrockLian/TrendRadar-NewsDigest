@@ -169,6 +169,15 @@ def test_japanese_article_gets_chinese_enrichment(config, feed, item):
     factory.return_value.responses.create.assert_called_once()
 
 
+def test_older_live_article_uses_news_quota(config, feed, item):
+    article, _ = ingest(feed, {**item, "title": "Older live report", "summary": "Older untranslated news."})
+    article.first_seen = timezone.now() - timedelta(days=2)
+    article.save(update_fields=["first_seen"])
+    with patch("app.ai.services.structured", return_value=Enrichment(title="旧闻标题", summary="旧闻中文简介。")) as call:
+        enrich_article(article.current_id)
+    assert call.call_args.kwargs["lane"] == "fresh"
+
+
 def test_chinese_article_with_only_content_still_gets_ai_summary(config, feed, item):
     source = {**item, "summary": "", "content": "这是一篇需要压缩成简介的完整中文新闻正文。"}
     article, _ = ingest(feed, source)

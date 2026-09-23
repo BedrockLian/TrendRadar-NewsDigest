@@ -291,7 +291,7 @@ def enrich_article(version_id):
         "urgent"
         if recent_brief or (article.breaking and article.first_seen >= timezone.now() - timedelta(hours=12))
         else "fresh"
-        if not article.imported and article.first_seen >= timezone.now() - timedelta(days=1)
+        if not article.imported
         else "backfill"
     )
     result = structured(
